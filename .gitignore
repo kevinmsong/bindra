@@ -15,7 +15,6 @@ envs/*/.venv/
 data/raw/
 data/processed/
 data/cache/
-data/snapshots/
 *.pt
 *.safetensors
 *.npy
@@ -29,10 +28,20 @@ data/snapshots/
 # describe is reconstructed from them, not stored here.
 !data/splits/**/*.json
 !data/benchmarks/**/*.json
-!data/snapshots/
+
+# Snapshots: commit the JSON records, never the archives. Order matters --
+# re-include the directories first so git can descend into them, then allow
+# only .json. Un-ignoring the directory itself (!data/snapshots/) would admit
+# the 567 MB archive, which is how it got committed once already.
+data/snapshots/**
 !data/snapshots/**/
-!data/snapshots/**/provenance.json
-!data/snapshots/**/census.json
+!data/snapshots/**/*.json
+
+# Bulk archives, belt and braces.
+*.zip
+*.tar
+*.tar.gz
+*.sdf
 
 # Run outputs
 checkpoints/
