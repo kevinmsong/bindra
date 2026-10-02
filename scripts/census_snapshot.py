@@ -28,6 +28,7 @@ from bindra.data.bindingdb.schema import (
     ENDPOINT_COLUMNS,
     chain_columns,
     declared_chain_count,
+    publication_year,
     validate_header,
 )
 from bindra.data.bindingdb.snapshot import SnapshotProvenance
@@ -89,7 +90,8 @@ def census(archive_path: Path, member: str, limit: int | None = None) -> dict:
                 counts["single_chain_without_sequence"] += 1
 
             date = field(row, date_at)
-            years[date[:4] if len(date) >= 4 and date[:4].isdigit() else "unknown"] += 1
+            year = publication_year(date)
+            years[str(year) if year else "unknown"] += 1
 
             row_has_endpoint = False
             for endpoint, position in endpoint_at.items():

@@ -7,6 +7,7 @@ The real file is 567 MB and gitignored, so the tests that need it are marked
 from __future__ import annotations
 
 import csv
+from datetime import date
 import io
 from pathlib import Path
 import zipfile
@@ -24,6 +25,8 @@ from bindra.data.bindingdb.schema import (
     SchemaError,
     chain_columns,
     declared_chain_count,
+    parse_bindingdb_date,
+    publication_year,
     validate_header,
 )
 from bindra.data.endpoints import Endpoint, PValue, Relation, nm_to_p_value, parse_value_with_relation
@@ -103,6 +106,40 @@ class TestChainCount:
     @pytest.mark.parametrize("raw", ["", "  ", "n/a", None, "0", "-1"])
     def test_unusable_counts_return_none(self, raw):
         assert declared_chain_count(raw) is None
+
+
+class TestDateParsing:
+    """BindingDB writes US M/D/YYYY, and getting this wrong fails silently."""
+
+    def test_parses_us_format(self):
+        assert parse_bindingdb_date("8/30/1996") == date(1996, 8, 30)
+        assert parse_bindingdb_date("12/1/2024") == date(2024, 12, 1)
+
+    def test_month_and_day_are_not_transposed(self):
+        # 3/11 is 11 March in US format, not 3 November.
+        parsed = parse_bindingdb_date("3/11/2020")
+        assert (parsed.month, parsed.day) == (3, 11)
+
+    def test_also_accepts_iso(self):
+        assert parse_bindingdb_date("2020-03-11") == date(2020, 3, 11)
+
+    @pytest.mark.parametrize("raw", ["", "   ", None, "not a date", "13/45/2020"])
+    def test_unusable_dates_return_none(self, raw):
+        assert parse_bindingdb_date(raw) is None
+
+    def test_publication_year_extracts_the_year(self):
+        assert publication_year("8/30/1996") == 1996
+
+    def test_naive_four_character_slice_would_have_been_wrong(self):
+        """Regression guard for the bug this function was written to fix.
+
+        Taking date[:4] of "8/30/1996" yields "8/30", which is not a year, so
+        every row classifies as unknown and the temporal panel silently empties
+        instead of raising.
+        """
+        raw = "8/30/1996"
+        assert not raw[:4].isdigit()
+        assert publication_year(raw) == 1996
 
 
 class TestValueWithRelation:

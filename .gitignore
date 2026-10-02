@@ -32,6 +32,7 @@ data/snapshots/
 !data/snapshots/
 !data/snapshots/**/
 !data/snapshots/**/provenance.json
+!data/snapshots/**/census.json
 
 # Run outputs
 checkpoints/

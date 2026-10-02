@@ -19,6 +19,7 @@ single-protein observation.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, datetime
 
 from bindra.data.endpoints import Endpoint
 
@@ -146,6 +147,35 @@ def validate_header(header: list[str]) -> None:
             )
 
 
+def parse_bindingdb_date(raw: str | None) -> date | None:
+    """Parse a BindingDB date cell, or None if it is unusable.
+
+    BindingDB writes US ``M/D/YYYY`` (e.g. ``8/30/1996``), not ISO-8601. This
+    is worth a named function with tests because the failure is silent: slicing
+    the first four characters for a year yields ``'8/30'`` and classifies every
+    row as unknown date, which would quietly empty the temporal benchmark
+    rather than erroring. That happened during the first census run.
+    """
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+
+    for fmt in ("%m/%d/%Y", "%Y-%m-%d", "%m/%d/%y"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def publication_year(raw: str | None) -> int | None:
+    """Year of a BindingDB date cell, or None if unusable."""
+    parsed = parse_bindingdb_date(raw)
+    return parsed.year if parsed else None
+
+
 def declared_chain_count(raw: str) -> int | None:
     """Parse the declared protein-chain count, or None if unusable."""
     try:
@@ -184,5 +214,7 @@ __all__ = [
     "SchemaError",
     "chain_columns",
     "declared_chain_count",
+    "parse_bindingdb_date",
+    "publication_year",
     "validate_header",
 ]

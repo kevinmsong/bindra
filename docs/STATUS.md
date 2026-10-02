@@ -40,6 +40,8 @@ Nothing below is `validated`. Nothing below is `trained`.
 | Endpoint / p-value conversion | implemented | `bindra/data/endpoints.py`, 41 tests incl. the spec's required table |
 | Censoring relations and reversal | implemented | Round-trip and strictness tests pass |
 | Snapshot provenance + verification | implemented | `bindra/data/bindingdb/snapshot.py`, 14 tests |
+| TSV schema + header validation | implemented | `bindra/data/bindingdb/schema.py`, verified vs. real file |
+| Snapshot census | smoke-tested | 3.24M rows scanned; `docs/DATA_PROFILE.md` |
 | BindingDB snapshot acquired | smoke-tested | Release 202610, see below |
 | BindingDB ingestion (parsing) | absent | Snapshot in hand; parser not written |
 | Standardization and QC | absent | |
@@ -126,6 +128,13 @@ under the old adapter can be mistaken for this contract.
    legacy baseline is therefore **single-member inference only**. Recorded
    legacy validation metrics, in KIBA units, not reproduced here yet:
    RMSE 0.473, CI 0.868, R² 0.689, epoch 47.
+
+## Decisions pending (must be made before modelling)
+
+- **Temporal cutoff year.** Coverage measured (see `docs/DATA_PROFILE.md`);
+  2022 or 2023 both leave a substantial future panel. Not chosen.
+- **Ligand cache strategy.** KPGT token states for all 1.44M molecules would be
+  ~100 GB. Requires a pilot encode before committing.
 
 ## Deliberately not claimed
 
