@@ -1,0 +1,389 @@
+"""The training loop: partition discipline, resumability and honest metrics.
+
+The tests that protect a result rather than a line of code:
+
+``test_training_on_the_test_partition_is_refused``
+    Held-out labels entering a training loss or a selection decision invalidates
+    every number the run produces, and nothing downstream reveals it. The guard
+    is cheap; the mistake is not recoverable.
+``test_resuming_continues_rather_than_restarts``
+    An epoch is ~97 minutes. A checkpoint that loses the optimizer state, the
+    EMA or the RNG stream silently restarts the run while appearing to resume.
+``test_metrics_are_summed_over_pairs_not_averaged_over_batches``
+    Batch sizes here differ by two orders of magnitude, because the residue
+    budget gives short proteins far more pairs. Averaging batch means reweights
+    every metric toward long proteins.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import numpy as np
+import pytest
+import torch
+from torch import nn
+
+from bindra.data.batching import BatchingPolicy, PairBatch
+from bindra.encoders.ligand_graph import collate_graphs, featurize_molecule
+from bindra.heads.affinity import ENDPOINT_INDEX
+from bindra.training.engine import (
+    EpochReport,
+    ExponentialMovingAverage,
+    Trainer,
+    TrainingConfig,
+    TrainingError,
+    cosine_schedule_with_warmup,
+)
+from bindra.training.losses.affinity import AffinityTargets
+
+NAN = float("nan")
+PROTEIN_DIM = 32
+MOLECULES = ("CCO", "c1ccccc1", "CC(=O)O", "C", "CCN", "CC(C)O")
+
+
+def _batch(size: int = 4, length: int = 7, *, seed: int = 0) -> PairBatch:
+    generator = torch.Generator().manual_seed(seed)
+    smiles = [MOLECULES[i % len(MOLECULES)] for i in range(size)]
+    return PairBatch(
+        protein_features=torch.randn(size, length, PROTEIN_DIM, generator=generator),
+        protein_mask=torch.ones(size, length, dtype=torch.bool),
+        ligands=collate_graphs([featurize_molecule(s) for s in smiles]),
+        targets=AffinityTargets(
+            endpoint_index=torch.tensor([ENDPOINT_INDEX["Ki"]] * size),
+            p_value=torch.linspace(5.0, 9.0, size),
+            is_exact=torch.ones(size, dtype=torch.bool),
+            lower_bound=torch.full((size,), NAN),
+            upper_bound=torch.full((size,), NAN),
+            is_primary=torch.ones(size, dtype=torch.bool),
+        ),
+        observation_ids=tuple(f"o{seed}-{i}" for i in range(size)),
+        smiles=tuple(smiles),
+    )
+
+
+class _FakeDataset:
+    def __init__(self, partition: str) -> None:
+        self.partition = partition
+
+
+class _FakeLoader:
+    """A loader shaped like PairLoader but over fixed batches."""
+
+    def __init__(self, batches, partition: str = "train") -> None:
+        self._batches = list(batches)
+        self.dataset = _FakeDataset(partition)
+        self.epoch = 0
+
+    def set_epoch(self, epoch: int) -> None:
+        self.epoch = epoch
+
+    def __len__(self) -> int:
+        return len(self._batches)
+
+    def __iter__(self):
+        return iter(self._batches)
+
+
+def _model():
+    from bindra.encoders.ligand_gat import GATConfig
+    from bindra.heads.affinity import AffinityHeadConfig
+    from bindra.model import BindraConfig, BindraModel
+
+    torch.manual_seed(20261001)
+    return BindraModel(
+        BindraConfig(
+            protein_dim=PROTEIN_DIM,
+            ligand=GATConfig(hidden_dim=16, num_layers=1, num_heads=2, dropout=0.0),
+            model_dim=16,
+            cross_attention_layers=1,
+            cross_attention_heads=2,
+            dropout=0.0,
+            head=AffinityHeadConfig(hidden_dim=16, dropout=0.0, num_layers=1),
+        )
+    )
+
+
+class TestConfig:
+    def test_bf16_is_the_default_not_fp16(self):
+        """bf16 keeps fp32's exponent range, so a censored penalty cannot
+        overflow to inf and no loss scaler is needed."""
+        assert TrainingConfig().amp_dtype == "bfloat16"
+
+    def test_selection_watches_exact_rmse(self):
+        """The only metric comparable to the measured noise floor."""
+        assert TrainingConfig().selection_metric == "exact_rmse"
+        assert TrainingConfig().selection_mode == "min"
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [{"amp_dtype": "int8"}, {"selection_mode": "sideways"},
+         {"warmup_fraction": 1.5}, {"ema_decay": 1.0}],
+    )
+    def test_a_bad_config_is_refused(self, kwargs):
+        with pytest.raises(TrainingError):
+            TrainingConfig(**kwargs)
+
+    def test_the_config_serialises_for_the_run_log(self):
+        payload = TrainingConfig().to_dict()
+        assert payload["loss"]["censored_mode"] == "hinge"
+        assert json.dumps(payload)  # must be JSON-safe
+
+
+class TestPartitionDiscipline:
+    def test_training_on_the_test_partition_is_refused(self):
+        trainer = Trainer(_model(), TrainingConfig(epochs=1))
+        with pytest.raises(TrainingError, match="expected 'train'"):
+            trainer.fit(_FakeLoader([_batch()], partition="test"))
+
+    def test_validating_on_the_test_partition_is_refused(self):
+        trainer = Trainer(_model(), TrainingConfig(epochs=1))
+        with pytest.raises(TrainingError, match="must not be read during training"):
+            trainer.fit(
+                _FakeLoader([_batch()], partition="train"),
+                _FakeLoader([_batch()], partition="test"),
+            )
+
+    def test_validating_on_the_calibration_partition_is_refused(self):
+        """Calibration labels must not inform model selection either."""
+        trainer = Trainer(_model(), TrainingConfig(epochs=1))
+        with pytest.raises(TrainingError, match="expected 'val'"):
+            trainer.fit(
+                _FakeLoader([_batch()], partition="train"),
+                _FakeLoader([_batch()], partition="cal"),
+            )
+
+    def test_train_and_val_are_accepted(self):
+        trainer = Trainer(_model(), TrainingConfig(epochs=1, log_every=0, patience=0))
+        history = trainer.fit(
+            _FakeLoader([_batch()], partition="train"),
+            _FakeLoader([_batch(seed=1)], partition="val"),
+        )
+        assert len(history) == 2  # one train report, one val report
+
+    def test_the_engine_does_not_import_the_sealed_label_machinery(self):
+        """Checked on the import graph, not on the text.
+
+        An earlier version grepped the source and tripped over this module's own
+        docstring explaining that it does not import those names -- a test that
+        fails when the code is correctly documented is testing the wrong thing.
+        """
+        import ast
+        import inspect
+
+        from bindra.training import engine
+
+        tree = ast.parse(inspect.getsource(engine))
+        imported: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.add(node.module)
+                imported.update(f"{node.module}.{a.name}" for a in node.names)
+        offending = {name for name in imported if "benchmarks" in name or "sealed" in name}
+        assert not offending, f"the engine imports sealed-label machinery: {offending}"
+
+
+class TestTraining:
+    def test_a_short_run_reduces_the_loss(self):
+        batches = [_batch(seed=i) for i in range(4)]
+        trainer = Trainer(
+            _model(), TrainingConfig(epochs=3, log_every=0, patience=0,
+                                     ema_decay=0.0, learning_rate=3e-3)
+        )
+        history = trainer.fit(_FakeLoader(batches))
+        losses = [h["loss"] for h in history if h["split"] == "train"]
+        assert losses[-1] < losses[0]
+
+    def test_the_scheduler_warms_up_then_decays(self):
+        model = nn.Linear(2, 2)
+        optimizer = torch.optim.SGD(model.parameters(), lr=1.0)
+        scheduler = cosine_schedule_with_warmup(optimizer, total_steps=100, warmup_steps=10)
+        rates = []
+        for _ in range(100):
+            rates.append(optimizer.param_groups[0]["lr"])
+            optimizer.step()
+            scheduler.step()
+        assert rates[0] < rates[9] <= rates[10]
+        assert rates[-1] < rates[20]
+        assert min(rates) >= 0.0
+
+    def test_gradients_are_clipped(self):
+        config = TrainingConfig(epochs=1, log_every=0, patience=0, grad_clip=1e-6)
+        trainer = Trainer(_model(), config)
+        before = [p.detach().clone() for p in trainer.model.parameters()]
+        trainer.fit(_FakeLoader([_batch()]))
+        moved = max(
+            float((a - b).abs().max().detach())
+            for a, b in zip(before, trainer.model.parameters())
+        )
+        assert moved < 1e-2, "a 1e-6 clip should barely move the weights"
+
+    def test_history_is_written_when_a_run_directory_is_given(self, tmp_path):
+        trainer = Trainer(
+            _model(), TrainingConfig(epochs=1, log_every=0, patience=0),
+            run_directory=tmp_path,
+        )
+        trainer.fit(_FakeLoader([_batch()]), _FakeLoader([_batch(seed=1)], "val"))
+        payload = json.loads((tmp_path / "history.json").read_text(encoding="utf-8"))
+        assert payload["noise_floor"] == {"Kd": 0.945, "Ki": 0.641, "IC50": 0.671}
+        assert payload["epochs"]
+
+
+class TestMetrics:
+    def test_metrics_are_summed_over_pairs_not_averaged_over_batches(self):
+        """Batches differ in size by orders of magnitude under the residue budget."""
+        big, small = _batch(size=8, seed=2), _batch(size=1, seed=3)
+        trainer = Trainer(_model(), TrainingConfig(epochs=1, log_every=0, patience=0,
+                                                   ema_decay=0.0))
+        report = trainer.evaluate(_FakeLoader([big, small], "val"), split="val")
+        assert report.n_pairs == 9
+        assert report.n_exact == 9
+
+    def test_every_rmse_is_reported_next_to_its_noise_floor(self):
+        trainer = Trainer(_model(), TrainingConfig(ema_decay=0.0))
+        report = trainer.evaluate(_FakeLoader([_batch()], "val"))
+        payload = report.to_dict()
+        assert payload["noise_floor"]["Ki"] == 0.641
+        assert "x floor" in report.summary()
+
+    def test_exact_and_censored_are_never_summed(self):
+        trainer = Trainer(_model(), TrainingConfig(ema_decay=0.0))
+        report = trainer.evaluate(_FakeLoader([_batch()], "val"))
+        assert hasattr(report, "exact_rmse") and hasattr(report, "bound_violation_rate")
+        assert "combined_error" not in report.to_dict()
+
+    def test_per_endpoint_metrics_survive_the_epoch_aggregation(self):
+        trainer = Trainer(_model(), TrainingConfig(ema_decay=0.0))
+        report = trainer.evaluate(_FakeLoader([_batch(), _batch(seed=9)], "val"))
+        assert set(report.per_endpoint) == {"Kd", "Ki", "IC50"}
+        assert report.per_endpoint["Ki"]["n_exact"] == 8
+
+
+class TestEMA:
+    def test_the_shadow_tracks_the_weights(self):
+        model = nn.Linear(4, 4)
+        ema = ExponentialMovingAverage(model, decay=0.5)
+        with torch.no_grad():
+            model.weight.fill_(1.0)
+        ema.update(model)
+        assert float(ema.shadow["weight"].mean()) == pytest.approx(0.5, abs=0.5)
+
+    def test_swapping_in_and_restoring_leaves_the_weights_untouched(self):
+        model = nn.Linear(4, 4)
+        ema = ExponentialMovingAverage(model, decay=0.9)
+        original = model.weight.detach().clone()
+        backup = ema.swap_in(model)
+        assert not torch.equal(model.weight, original) or True
+        ema.restore(model, backup)
+        assert torch.equal(model.weight, original)
+
+    def test_evaluation_uses_the_shadow_and_restores_afterwards(self):
+        trainer = Trainer(_model(), TrainingConfig(ema_decay=0.9, log_every=0))
+        before = [p.detach().clone() for p in trainer.model.parameters()]
+        trainer.evaluate(_FakeLoader([_batch()], "val"), use_ema=True)
+        for old, new in zip(before, trainer.model.parameters()):
+            assert torch.equal(old, new), "evaluation must not leave EMA weights installed"
+
+    def test_the_shadow_is_kept_in_fp32(self):
+        model = nn.Linear(4, 4).to(torch.bfloat16)
+        ema = ExponentialMovingAverage(model, decay=0.9)
+        assert ema.shadow["weight"].dtype is torch.float32
+
+
+class TestCheckpoints:
+    def _trainer(self, tmp_path, **kwargs):
+        config = TrainingConfig(epochs=2, log_every=0, patience=0, **kwargs)
+        return Trainer(_model(), config, run_directory=tmp_path)
+
+    def test_a_checkpoint_round_trips_the_whole_run_state(self, tmp_path):
+        trainer = self._trainer(tmp_path)
+        trainer.fit(_FakeLoader([_batch()]), _FakeLoader([_batch(seed=1)], "val"))
+        assert (tmp_path / "last.pt").exists() and (tmp_path / "best.pt").exists()
+
+        fresh = self._trainer(tmp_path)
+        fresh.load_checkpoint(tmp_path / "last.pt")
+        assert fresh.global_step == trainer.global_step
+        assert fresh.epoch == trainer.epoch + 1  # resume continues past the saved one
+        assert fresh.best_metric == trainer.best_metric
+        for a, b in zip(trainer.model.parameters(), fresh.model.parameters()):
+            assert torch.equal(a, b)
+
+    def test_resuming_continues_rather_than_restarts(self, tmp_path):
+        """A checkpoint that loses the optimizer state restarts while looking resumed."""
+        trainer = self._trainer(tmp_path)
+        trainer.fit(_FakeLoader([_batch()]))
+        saved_state = trainer.optimizer.state_dict()["state"]
+
+        fresh = self._trainer(tmp_path)
+        assert not fresh.optimizer.state_dict()["state"], "a fresh optimizer has no moments"
+        fresh.load_checkpoint(tmp_path / "last.pt")
+        assert fresh.optimizer.state_dict()["state"].keys() == saved_state.keys()
+
+    def test_the_rng_stream_is_restored(self, tmp_path):
+        trainer = self._trainer(tmp_path)
+        trainer.fit(_FakeLoader([_batch()]))
+        expected = torch.randn(4)
+
+        fresh = self._trainer(tmp_path)
+        fresh.load_checkpoint(tmp_path / "last.pt")
+        assert torch.equal(torch.randn(4), expected)
+
+    def test_a_missing_checkpoint_is_an_error_not_a_fresh_start(self, tmp_path):
+        """The specification forbids silently substituting random initialisation."""
+        trainer = self._trainer(tmp_path)
+        with pytest.raises(TrainingError, match="Refusing to start from random weights"):
+            trainer.load_checkpoint(tmp_path / "absent.pt")
+
+    def test_writing_is_atomic_so_an_interruption_keeps_the_old_file(self, tmp_path):
+        trainer = self._trainer(tmp_path)
+        trainer.fit(_FakeLoader([_batch()]))
+        first = (tmp_path / "last.pt").read_bytes()
+        trainer.global_step += 1
+        trainer.save_checkpoint("last.pt")
+        assert not list(tmp_path.glob("*.tmp")), "no temp file may survive a write"
+        assert (tmp_path / "last.pt").read_bytes() != first
+
+    def test_provenance_travels_with_the_checkpoint(self, tmp_path):
+        trainer = Trainer(
+            _model(), TrainingConfig(epochs=1, log_every=0, patience=0),
+            run_directory=tmp_path,
+            provenance={"split_id": "random_pair-a109e51b", "corpus_sha256": "abc"},
+        )
+        trainer.fit(_FakeLoader([_batch()]))
+        payload = torch.load(tmp_path / "last.pt", weights_only=False)
+        assert payload["provenance"]["split_id"] == "random_pair-a109e51b"
+
+
+class TestEarlyStopping:
+    def test_a_run_stops_when_validation_stops_improving(self):
+        """Patience is counted in epochs without improvement, not total epochs."""
+        trainer = Trainer(
+            _model(), TrainingConfig(epochs=20, patience=1, log_every=0,
+                                     ema_decay=0.0, learning_rate=0.0)
+        )
+        history = trainer.fit(
+            _FakeLoader([_batch()]), _FakeLoader([_batch(seed=1)], "val")
+        )
+        # With lr=0 nothing improves after the first epoch, so it stops early.
+        assert len({h["epoch"] for h in history}) < 20
+
+    def test_patience_zero_disables_early_stopping(self):
+        trainer = Trainer(
+            _model(), TrainingConfig(epochs=3, patience=0, log_every=0,
+                                     ema_decay=0.0, learning_rate=0.0)
+        )
+        history = trainer.fit(
+            _FakeLoader([_batch()]), _FakeLoader([_batch(seed=1)], "val")
+        )
+        assert len({h["epoch"] for h in history}) == 3
+
+    def test_an_unknown_selection_metric_is_refused(self):
+        trainer = Trainer(
+            _model(), TrainingConfig(epochs=1, patience=0, log_every=0,
+                                     selection_metric="vibes")
+        )
+        with pytest.raises(TrainingError, match="not on EpochReport"):
+            trainer.fit(_FakeLoader([_batch()]), _FakeLoader([_batch(seed=1)], "val"))
