@@ -1,7 +1,8 @@
 """ESM-C-600M protein encoder adapter.
 
-Ported from ``models/rmse_model.py::ProteinESM`` in DeepDTA-iBAM, with the two
-correctness problems in that implementation fixed:
+Ported from ``models/rmse_model.py::ProteinESM`` in DeepDTA-iBAM, with four
+correctness problems fixed. The first two were in the legacy code; the second
+two are hazards in the current ``esm`` package.
 
 1. **Special tokens were stripped by guessing.** The legacy ``_align_embeddings``
    compared the output length to the sequence length and sliced ``[1:1+L]`` when
@@ -15,12 +16,28 @@ correctness problems in that implementation fixed:
    input position each row came from. ``ProteinFeatures.residue_indices``
    now carries that mapping through, which is what lets an iBAM heatmap label
    a real residue position on a long protein.
+
+3. **The deprecated ``ESMC`` class is no longer used.** In ``esm`` >= 3.3 it is
+   a compatibility shim over ``EsmcForMaskedLM`` that also *realigns*
+   ``hidden_states`` onto the old layout. We use the native ``EsmcModel`` and
+   ``EsmcTokenizer`` directly, with the HF repo and revision pinned, so that
+   "ESM-C-600M" names one specific artifact rather than a moving target.
+
+4. **The post-LayerNorm state is selected explicitly.** ``EsmcModel`` exposes
+   both ``last_hidden_state`` (after the final LayerNorm) and
+   ``last_hidden_state_prenorm`` (the raw residual stream). Measured on this
+   machine they differ by a max of ~6.2e3, so picking the wrong one would
+   silently poison every downstream module. We take the post-LayerNorm state,
+   which is also the numerically stable choice: without fused kernels the
+   package warns that the *unnormalized* stream drifts by O(10)-O(100), while
+   after the final LayerNorm the difference is a few ULP.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import importlib.util
 from typing import Any, Sequence
 
 import torch
@@ -29,7 +46,7 @@ from bindra.features.types import EncoderMetadata, ProteinFeatures, sequence_dig
 
 #: Bump when the meaning or layout of the emitted features changes. This takes
 #: part in the cache key, so a bump invalidates every cached protein.
-FEATURE_SCHEMA_VERSION = "protein-esmc-v1"
+FEATURE_SCHEMA_VERSION = "protein-esmc-v2-postln-native"
 
 #: ESM-C-600M hidden width. Asserted against the real output, never assumed.
 EXPECTED_ESMC_600M_DIM = 1152
@@ -37,6 +54,36 @@ EXPECTED_ESMC_600M_DIM = 1152
 #: ESM-C was trained with a 2048-position context including special tokens.
 #: Longer sequences are windowed rather than truncated.
 DEFAULT_CONTEXT_LIMIT = 2048
+
+#: Pinned checkpoint. The revision is pinned because "ESMC-600M" is a mutable
+#: HF repo: resolving it by name alone would let the weights change underneath
+#: a cache that claims to hold ESM-C-600M features.
+ESMC_600M_REPO = "biohub/ESMC-600M"
+ESMC_600M_REVISION = "fcc9d36f5fff97d9bb69a36e3252de61cc78c968"
+
+#: SHA-256 over the sorted state dict of the pinned revision, measured on
+#: 2026-10-01. The revision pin already fixes the artifact; this detects the
+#: case where the loaded weights are not the ones the revision claims -- a
+#: corrupted HF cache, or a local override. Verify with
+#: ``ESMCProteinEncoder().weights_checksum()``.
+ESMC_600M_WEIGHTS_SHA256 = "7855e03269e5241e11bbb879108b888ffe10e625c730272eff80f99bf7cb8538"
+
+#: Optional kernel libraries that change ESM-C's numerics when present. Their
+#: presence is recorded in encoder metadata and therefore in the cache key.
+ACCELERATION_LIBRARIES = ("transformer_engine", "xformers", "flash_attn")
+
+
+def detect_kernel_backends() -> tuple[str, ...]:
+    """Which acceleration libraries are importable right now.
+
+    ESM-C falls back to pure-PyTorch LayerNorm, attention and RoPE when these
+    are missing, and the package warns that results differ numerically. Two
+    machines with different backends produce different features from the same
+    weights, so this belongs in the cache key, not in a comment.
+    """
+    return tuple(
+        name for name in ACCELERATION_LIBRARIES if importlib.util.find_spec(name) is not None
+    )
 
 
 class ProteinEncoderError(RuntimeError):
@@ -131,7 +178,8 @@ class ESMCProteinEncoder:
 
     def __init__(
         self,
-        checkpoint: str = "esmc_600m",
+        checkpoint: str = ESMC_600M_REPO,
+        revision: str | None = ESMC_600M_REVISION,
         device: torch.device | str = "cpu",
         precision: str = "bfloat16",
         context_limit: int = DEFAULT_CONTEXT_LIMIT,
@@ -140,6 +188,7 @@ class ESMCProteinEncoder:
         tokenizer: Any | None = None,
     ) -> None:
         self.checkpoint = checkpoint
+        self.revision = revision
         self.device = torch.device(device)
         self.precision = precision
         self.context_limit = context_limit
@@ -163,18 +212,27 @@ class ESMCProteinEncoder:
         if self._model is not None and self._tokenizer is not None:
             return
         try:
-            from esm.models.esmc import ESMC
-            from esm.tokenization import EsmSequenceTokenizer
+            # The native API, not the deprecated ESMC shim. The shim wraps
+            # EsmcForMaskedLM and realigns hidden_states onto the pre-3.3
+            # layout; we want the encoder itself and its documented outputs.
+            from esm.models.esmc.model import EsmcModel
+            from esm.models.esmc.tokenizer import EsmcTokenizer
         except ImportError as exc:  # pragma: no cover - environment dependent
             raise ProteinEncoderError(
-                "The 'esm' package is required for the ESM-C encoder. "
+                "The 'esm' package (>= 3.3) is required for the ESM-C encoder. "
                 "Install the 'encoders' extra."
             ) from exc
 
-        if self._model is None:
-            self._model = ESMC.from_pretrained(self.checkpoint).to(self.device).eval()
+        load_kwargs: dict[str, Any] = {}
+        if self.revision is not None:
+            load_kwargs["revision"] = self.revision
+
         if self._tokenizer is None:
-            self._tokenizer = EsmSequenceTokenizer()
+            self._tokenizer = EsmcTokenizer.from_pretrained(self.checkpoint, **load_kwargs)
+        if self._model is None:
+            self._model = (
+                EsmcModel.from_pretrained(self.checkpoint, **load_kwargs).to(self.device).eval()
+            )
 
     @property
     def model(self) -> Any:
@@ -207,12 +265,19 @@ class ESMCProteinEncoder:
             output_dim=output_dim,
             precision=self.precision,
             feature_schema_version=FEATURE_SCHEMA_VERSION,
+            revision=self.revision,
             weights_checksum=weights_checksum,
             preprocessing_policy=(
-                f"final-layer residue states; special tokens stripped via tokenizer mask; "
+                "EsmcModel.last_hidden_state (post final LayerNorm); "
+                "special tokens stripped via tokenizer mask; "
                 f"window={self.window_size} overlap={self.overlap} merge=mean"
             ),
-            extra={"context_limit": self.context_limit},
+            extra={
+                "context_limit": self.context_limit,
+                # Numerics depend on these, so they key the cache.
+                "kernel_backends": list(detect_kernel_backends()),
+                "api": "native-EsmcModel",
+            },
         )
 
     # -- encoding ---------------------------------------------------------
@@ -228,13 +293,18 @@ class ESMCProteinEncoder:
         with torch.inference_mode():
             output = self.model(tokens)
 
-        embeddings = getattr(output, "embeddings", None)
-        if embeddings is None:
-            embeddings = getattr(output, "hidden_states", None)
+        # Take the post-LayerNorm final state, by name and nothing else.
+        #
+        # The legacy adapter fell back through `embeddings` then `hidden_states`
+        # until something was not None. That is how you end up silently encoding
+        # the pre-norm residual stream, which on this machine differs from the
+        # post-norm state by a max of ~6.2e3. There is no sensible fallback
+        # here: if the field is missing, our model assumption is wrong.
+        embeddings = getattr(output, "last_hidden_state", None)
         if embeddings is None:
             raise ProteinEncoderError(
-                "ESM-C output exposed neither 'embeddings' nor 'hidden_states'; "
-                "refusing to guess which tensor holds the residue states."
+                f"{type(output).__name__} has no 'last_hidden_state'. This adapter targets the "
+                "native EsmcModel API; refusing to guess which tensor holds the residue states."
             )
 
         return strip_special_tokens(
@@ -276,7 +346,7 @@ class ESMCProteinEncoder:
         residue_features = accumulator / counts
 
         output_dim = int(residue_features.shape[1])
-        if self.checkpoint == "esmc_600m" and output_dim != EXPECTED_ESMC_600M_DIM:
+        if "600M" in self.checkpoint.upper() and output_dim != EXPECTED_ESMC_600M_DIM:
             raise ProteinEncoderError(
                 f"expected {EXPECTED_ESMC_600M_DIM}-dim features from esmc_600m, got {output_dim}"
             )
@@ -297,12 +367,17 @@ class ESMCProteinEncoder:
 
 
 __all__ = [
+    "ACCELERATION_LIBRARIES",
     "DEFAULT_CONTEXT_LIMIT",
+    "ESMC_600M_REPO",
+    "ESMC_600M_REVISION",
+    "ESMC_600M_WEIGHTS_SHA256",
     "ESMCProteinEncoder",
     "EXPECTED_ESMC_600M_DIM",
     "FEATURE_SCHEMA_VERSION",
     "ProteinEncoderError",
     "WindowPlan",
+    "detect_kernel_backends",
     "plan_windows",
     "strip_special_tokens",
 ]

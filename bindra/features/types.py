@@ -20,6 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 import hashlib
+import json
 from typing import Any, Mapping
 
 import torch
@@ -70,7 +71,15 @@ class EncoderMetadata:
     extra: Mapping[str, Any] = field(default_factory=dict)
 
     def cache_key(self, standardized_input: str) -> str:
-        """Content-addressed key over the input *and* the producing encoder."""
+        """Content-addressed key over the input *and* the producing encoder.
+
+        ``extra`` participates too, serialised with sorted keys so the key is
+        order-independent. That matters for more than tidiness: ESM-C's numerics
+        depend on which optional kernel libraries are installed (transformer-
+        engine, xformers, flash-attn), and that fact lives in ``extra``.
+        Installing flash-attn later would otherwise leave stale cached features
+        silently disagreeing with freshly computed ones.
+        """
         parts = [
             standardized_input,
             self.name,
@@ -81,6 +90,7 @@ class EncoderMetadata:
             self.revision or "",
             self.weights_checksum or "",
             self.preprocessing_policy or "",
+            json.dumps(dict(self.extra), sort_keys=True, separators=(",", ":"), default=str),
         ]
         return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()
 

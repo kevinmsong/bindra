@@ -56,6 +56,39 @@ which marks special positions exactly, and **raises** on any count mismatch.
 Verified: ESM-C returns 35 positions for a 33-residue sequence; the mask
 identifies both `<cls>` and `<eos>`.
 
+### 1b. The output tensor was chosen by attribute fallback — **fixed**
+
+`_embed_chunks_esmc` took `outputs.embeddings`, falling back to
+`outputs.hidden_states`, and raised only if both were absent. That is a guess
+about which tensor holds the residue states.
+
+It matters more than it looks. The native `EsmcModel` exposes both
+`last_hidden_state` (after the final LayerNorm) and `last_hidden_state_prenorm`
+(the raw residual stream). Measured on this machine for a 33-residue sequence,
+they differ by a **max of ~6.2e3**. Reading the wrong one would not crash; it
+would silently produce a cache of garbage.
+
+The legacy code happened to land on the right tensor — `ESMC(...).embeddings`
+matches `last_hidden_state` to within 0.007 — but by luck, not by design.
+BINDRA names `last_hidden_state` explicitly and raises if it is absent, and a
+test asserts the two tensors differ sharply so the reason is not forgotten.
+
+### 1c. The checkpoint was a moving target — **fixed**
+
+`ESMC.from_pretrained("esmc_600m")` resolves a mutable HF repo through a
+deprecated shim. The installed `esm` also changed under us: the legacy project
+had 3.2.1, this one resolved 3.4.1, in which `ESMC` is a compatibility wrapper
+that *realigns* `hidden_states` onto the old layout.
+
+BINDRA pins `biohub/ESMC-600M` @ `fcc9d36f5fff97d9bb69a36e3252de61cc78c968`,
+records the state-dict SHA-256 (`7855e032…8538`) and asserts it in a test.
+
+It also records which acceleration libraries are installed. ESM-C falls back to
+pure-PyTorch LayerNorm, attention and RoPE when transformer-engine, xformers
+and flash-attn are absent — as they are here — and warns that this changes
+results numerically. That set is part of the cache key, so installing
+flash-attn later invalidates the cache rather than silently disagreeing with it.
+
 ### 2. Residue numbering lost when windowing — **fixed**
 
 `_stitch_chunks` (`data/cache_builders.py:123-139`) averaged overlapping windows
@@ -92,6 +125,15 @@ ranking group."* The group key must be target + endpoint + assay-comparability.
 `maybe_parallelize_model` (`training/engine.py:207-214`) wraps the model across
 every visible CUDA device. On this machine that shards batches across a 16 GB
 5060 Ti and a 4 GB T1200. BINDRA is single-GPU and selects by capability.
+
+The companion hazard was confirmed accidentally during this work. A throwaway
+script that hardcoded `cuda:1` — without importing `bindra` first, so
+`CUDA_DEVICE_ORDER=PCI_BUS_ID` was never set — landed on the **4 GB T1200** and
+died with `CUDA out of memory ... GPU 1 has a total capacity of 4.00 GiB`.
+Under PCI-bus ordering `cuda:1` is the 16 GB card; under CUDA's default
+ordering it is not. This is precisely why `bindra.runtime.device` selects by
+capability and memory, and why the environment variable is set in
+`bindra/__init__.py` before any CUDA context can be created.
 
 ### 7. Invalid SMILES became an all-zero graph — **fix pending**
 

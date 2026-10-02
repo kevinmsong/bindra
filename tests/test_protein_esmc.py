@@ -10,8 +10,11 @@ import pytest
 import torch
 
 from bindra.encoders.protein_esmc import (
+    ESMC_600M_REPO,
+    ESMC_600M_REVISION,
     ESMCProteinEncoder,
     ProteinEncoderError,
+    detect_kernel_backends,
     plan_windows,
     strip_special_tokens,
 )
@@ -185,6 +188,145 @@ class TestCacheKeying:
         assert self._metadata().cache_key("MKT") != self._metadata(**override).cache_key("MKT")
 
 
+class TestCheckpointPinning:
+    """"ESM-C-600M" must name one artifact, not a moving HF repo."""
+
+    def test_revision_is_pinned_to_a_full_sha(self):
+        assert len(ESMC_600M_REVISION) == 40
+        assert all(character in "0123456789abcdef" for character in ESMC_600M_REVISION)
+
+    def test_encoder_defaults_to_the_pinned_revision(self):
+        encoder = ESMCProteinEncoder()
+        assert encoder.checkpoint == ESMC_600M_REPO
+        assert encoder.revision == ESMC_600M_REVISION
+
+    def test_revision_reaches_the_metadata_and_the_cache_key(self):
+        pinned = ESMCProteinEncoder().metadata(1152)
+        floating = ESMCProteinEncoder(revision=None).metadata(1152)
+        assert pinned.revision == ESMC_600M_REVISION
+        assert floating.revision is None
+        assert pinned.cache_key("MKT") != floating.cache_key("MKT")
+
+
+class TestNumericalProvenance:
+    """Record the things that silently change ESM-C's output."""
+
+    def test_metadata_names_the_post_layernorm_tensor(self):
+        # Not decoration: last_hidden_state and last_hidden_state_prenorm
+        # differ by ~6.2e3, so which one produced a cache must be recorded.
+        policy = ESMCProteinEncoder().metadata(1152).preprocessing_policy
+        assert policy is not None
+        assert "post final LayerNorm" in policy
+
+    def test_kernel_backends_are_recorded(self):
+        metadata = ESMCProteinEncoder().metadata(1152)
+        assert "kernel_backends" in metadata.extra
+        assert metadata.extra["kernel_backends"] == list(detect_kernel_backends())
+
+    def test_installing_a_fused_kernel_invalidates_the_cache(self):
+        """Different kernels, different numerics, therefore different key.
+
+        Without this, installing flash-attn later would leave cached features
+        silently disagreeing with freshly computed ones.
+        """
+        base = ESMCProteinEncoder().metadata(1152)
+        with_flash = EncoderMetadata(
+            **{**base.to_dict(), "extra": {**base.extra, "kernel_backends": ["flash_attn"]}}
+        )
+        assert base.cache_key("MKT") != with_flash.cache_key("MKT")
+
+    def test_extra_ordering_does_not_change_the_key(self):
+        first = EncoderMetadata(
+            name="e", checkpoint="c", output_dim=4, precision="bfloat16",
+            feature_schema_version="v1", extra={"a": 1, "b": 2},
+        )
+        second = EncoderMetadata(
+            name="e", checkpoint="c", output_dim=4, precision="bfloat16",
+            feature_schema_version="v1", extra={"b": 2, "a": 1},
+        )
+        assert first.cache_key("MKT") == second.cache_key("MKT")
+
+    def test_schema_version_marks_the_native_post_ln_contract(self):
+        from bindra.encoders.protein_esmc import FEATURE_SCHEMA_VERSION
+
+        # Any cache built against the old deprecated-shim adapter must not be
+        # mistaken for one built against this contract.
+        assert FEATURE_SCHEMA_VERSION == "protein-esmc-v2-postln-native"
+
+
+class TestOutputTensorSelection:
+    """The adapter must not fall back through candidate attribute names."""
+
+    class _OutputWithoutLastHidden:
+        embeddings = torch.zeros(1, 3, 4)
+        hidden_states = torch.zeros(1, 3, 4)
+
+    def test_missing_last_hidden_state_raises_instead_of_falling_back(self):
+        encoder = ESMCProteinEncoder(
+            model=lambda _tokens: self._OutputWithoutLastHidden(),
+            tokenizer=_StubTokenizer(),
+        )
+        with pytest.raises(ProteinEncoderError, match="no 'last_hidden_state'"):
+            encoder.encode("MKT")
+
+
+class _StubTokenizer:
+    """Minimal tokenizer: <cls> + residues + <eos>."""
+
+    def encode(self, sequence: str) -> list[int]:
+        return [0, *(10 + index for index in range(len(sequence))), 2]
+
+    def get_special_tokens_mask(self, token_ids, already_has_special_tokens=False):
+        return [1] + [0] * (len(token_ids) - 2) + [1]
+
+
+class TestWithStubModel:
+    """End-to-end encode() behaviour without downloading weights."""
+
+    class _Model:
+        def __init__(self, dim: int = 1152):
+            self.dim = dim
+
+        def __call__(self, tokens):
+            length = tokens.shape[1]
+
+            class _Out:
+                # Deterministic, position-dependent values so stitching is checkable.
+                last_hidden_state = torch.arange(
+                    length, dtype=torch.float32
+                ).unsqueeze(0).unsqueeze(-1).repeat(1, 1, dim_holder["dim"])
+
+            return _Out()
+
+    def test_encode_strips_specials_and_numbers_residues(self):
+        dim_holder["dim"] = 1152
+        encoder = ESMCProteinEncoder(
+            model=self._Model(), tokenizer=_StubTokenizer(), precision="float32"
+        )
+        sequence = "MKTAY"
+        features = encoder.encode(sequence)
+
+        assert features.residue_features.shape == (5, 1152)
+        assert features.residue_indices.tolist() == [0, 1, 2, 3, 4]
+        assert features.covers_full_sequence
+        # Positions 1..5 of the token stream survive; <cls> at 0 and <eos> last are gone.
+        torch.testing.assert_close(
+            features.residue_features[:, 0], torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0])
+        )
+
+    def test_wrong_dim_for_a_600m_checkpoint_is_rejected(self):
+        dim_holder["dim"] = 640
+        encoder = ESMCProteinEncoder(
+            model=self._Model(), tokenizer=_StubTokenizer(), precision="float32"
+        )
+        with pytest.raises(ProteinEncoderError, match="expected 1152-dim"):
+            encoder.encode("MKT")
+
+
+#: Lets the stub model vary its width between tests.
+dim_holder: dict[str, int] = {"dim": 1152}
+
+
 @pytest.mark.gpu
 @pytest.mark.encoders
 class TestAgainstRealEsmC:
@@ -194,13 +336,18 @@ class TestAgainstRealEsmC:
     """
 
     @pytest.fixture(scope="class")
-    def encoder(self):
+    @classmethod
+    def encoder(cls):
         pytest.importorskip("esm")
         if not torch.cuda.is_available():
             pytest.skip("no CUDA device")
-        from bindra.runtime.device import DeviceRequirement, select_device
+        from bindra.runtime.device import DeviceRequirement, DeviceSelectionError, select_device
 
-        return ESMCProteinEncoder(device=select_device(DeviceRequirement()))
+        try:
+            device = select_device(DeviceRequirement())
+        except DeviceSelectionError as exc:
+            pytest.skip(f"no suitable GPU: {exc}")
+        return ESMCProteinEncoder(device=device)
 
     def test_residue_count_and_dim_match_the_input(self, encoder):
         sequence = "MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQ"
@@ -229,3 +376,26 @@ class TestAgainstRealEsmC:
         short = encoder.encode("MKTAYIAKQRQ").residue_features.float()
         longer = encoder.encode("MKTAYIAKQRQISFVKSHFSRQ").residue_features.float()[: short.shape[0]]
         assert not torch.allclose(short, longer, atol=1e-3)
+
+    def test_loaded_weights_match_the_recorded_checksum(self, encoder):
+        """The pinned revision really does load the weights we recorded."""
+        from bindra.encoders.protein_esmc import ESMC_600M_WEIGHTS_SHA256
+
+        assert encoder.weights_checksum() == ESMC_600M_WEIGHTS_SHA256
+
+    def test_post_layernorm_state_differs_sharply_from_the_prenorm_stream(self, encoder):
+        """Document why the output tensor is selected by name, not by fallback.
+
+        If these two were close, the legacy attribute-fallback would have been
+        harmless. They are not: the difference is ~1e3, so reading the wrong
+        field silently poisons every cached feature.
+        """
+        import torch as _torch
+
+        tokens = _torch.tensor([encoder.tokenizer.encode("MKTAYIAKQRQ")], device=encoder.device)
+        with _torch.inference_mode():
+            output = encoder.model(tokens, output_hidden_states=True)
+
+        post = output.last_hidden_state[0].float()
+        prenorm = output.last_hidden_state_prenorm[0].float()
+        assert (post - prenorm).abs().max().item() > 100.0

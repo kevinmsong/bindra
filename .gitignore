@@ -24,10 +24,14 @@ data/snapshots/
 *.tsv
 *.tsv.gz
 
-# Split manifests and benchmark manifests ARE committed: they are small,
-# and immutability is the point.
+# Split manifests, benchmark manifests and snapshot provenance ARE committed:
+# they are small, and reproducibility is the whole point. The bulk data they
+# describe is reconstructed from them, not stored here.
 !data/splits/**/*.json
 !data/benchmarks/**/*.json
+!data/snapshots/
+!data/snapshots/**/
+!data/snapshots/**/provenance.json
 
 # Run outputs
 checkpoints/
