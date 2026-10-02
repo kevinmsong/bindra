@@ -62,6 +62,19 @@ from bindra.training.losses.affinity import (
 )
 
 
+NEWLINE = chr(10)
+
+
+def _duration(seconds: float) -> str:
+    """``1h02m``, ``7m13s``, ``42s`` -- short enough to sit in a progress line."""
+    seconds = max(0.0, seconds)
+    if seconds >= 3600:
+        return f"{int(seconds // 3600)}h{int((seconds % 3600) // 60):02d}m"
+    if seconds >= 60:
+        return f"{int(seconds // 60)}m{int(seconds % 60):02d}s"
+    return f"{seconds:.0f}s"
+
+
 class TrainingError(RuntimeError):
     """The run could not proceed as configured."""
 
@@ -136,20 +149,38 @@ class ExponentialMovingAverage:
     averaging it again would lag the data twice.
     """
 
-    def __init__(self, module: nn.Module, decay: float) -> None:
+    def __init__(self, module: nn.Module, decay: float, *, warmup: int = 10) -> None:
         self.decay = decay
+        #: Steps over which the effective decay ramps up. Without this the
+        #: shadow is dominated by the random initialisation for thousands of
+        #: steps: at decay 0.999, after 66 steps it is still 94% initial
+        #: weights, so validation scores an untrained model and reports a
+        #: constant-offset RMSE of ~6.5 against a train RMSE of ~1.8. Model
+        #: selection over the first epochs would be meaningless.
+        self.warmup = warmup
+        self.steps = 0
         self.shadow = {
             name: parameter.detach().clone().float()
             for name, parameter in module.named_parameters()
             if parameter.requires_grad
         }
 
+    def effective_decay(self) -> float:
+        """Ramps from ~0 to ``decay``, so early averages track the live weights.
+
+        The same correction Adam applies to its moments, in the form used by
+        most EMA implementations: ``(1 + t) / (warmup + t)`` capped at ``decay``.
+        """
+        return min(self.decay, (1.0 + self.steps) / (self.warmup + self.steps))
+
     @torch.no_grad()
     def update(self, module: nn.Module) -> None:
+        decay = self.effective_decay()
+        self.steps += 1
         for name, parameter in module.named_parameters():
             if name in self.shadow:
-                self.shadow[name].mul_(self.decay).add_(
-                    parameter.detach().float(), alpha=1.0 - self.decay
+                self.shadow[name].mul_(decay).add_(
+                    parameter.detach().float(), alpha=1.0 - decay
                 )
 
     @torch.no_grad()
@@ -168,11 +199,19 @@ class ExponentialMovingAverage:
             if name in backup:
                 parameter.copy_(backup[name])
 
-    def state_dict(self) -> dict[str, torch.Tensor]:
-        return {name: tensor.cpu() for name, tensor in self.shadow.items()}
+    def state_dict(self) -> dict[str, Any]:
+        return {
+            "shadow": {name: tensor.cpu() for name, tensor in self.shadow.items()},
+            "steps": self.steps,
+        }
 
-    def load_state_dict(self, state: Mapping[str, torch.Tensor]) -> None:
-        for name, tensor in state.items():
+    def load_state_dict(self, state: Mapping[str, Any]) -> None:
+        # Resuming must restore the step count too, or the effective decay
+        # restarts its warmup and the shadow is pulled back toward the live
+        # weights it had already averaged away from.
+        shadow = state.get("shadow", state)
+        self.steps = int(state.get("steps", 0)) if isinstance(state, Mapping) else 0
+        for name, tensor in shadow.items():
             if name in self.shadow:
                 self.shadow[name].copy_(tensor.to(self.shadow[name].device))
 
@@ -228,22 +267,59 @@ class EpochReport:
         }
 
     def summary(self) -> str:
+        """A short line, for a tail -f."""
         floors = noise_floor_table()
         parts = []
         for endpoint in ENDPOINT_ORDER:
             entry = self.per_endpoint.get(endpoint.value, {})
             if entry.get("n_exact"):
                 ratio = entry["rmse"] / floors[endpoint.value]
-                parts.append(
-                    f"{endpoint.value} {entry['rmse']:.3f} ({ratio:.2f}x floor,"
-                    f" n={int(entry['n_exact'])})"
-                )
+                parts.append(f"{endpoint.value} {entry['rmse']:.3f} ({ratio:.2f}x)")
         return (
-            f"epoch {self.epoch} {self.split}: loss {self.loss:.4f} "
-            f"exact RMSE {self.exact_rmse:.3f} | "
-            f"bound violations {self.bound_violation_rate:.3f} | "
-            + " ".join(parts)
+            f"epoch {self.epoch} {self.split:<5}: loss {self.loss:.4f} "
+            f"rmse {self.exact_rmse:.3f} viol {self.bound_violation_rate:.3f} "
+            f"| {self.n_pairs:,} pairs in {self.seconds:.0f}s "
+            f"({self.pairs_per_second:.0f}/s) | " + " ".join(parts)
         )
+
+    def table(self) -> str:
+        """The full per-endpoint breakdown, printed at the end of each epoch.
+
+        Every RMSE sits next to the measured replicate noise floor for its
+        endpoint. A ratio at or below 1.0 means the model is at the limit of
+        what repeated measurements of the same quantity agree on, which is the
+        point past which a smaller number is not a better model.
+        """
+        floors = noise_floor_table()
+        lines = [
+            f"  +-- epoch {self.epoch} {self.split} "
+            f"({self.n_pairs:,} pairs, {self.n_exact:,} exact, "
+            f"{self.n_censored:,} censored, {self.seconds:.0f}s "
+            f"@ {self.pairs_per_second:.0f} pairs/s)",
+            f"  |   loss {self.loss:.4f}   exact RMSE {self.exact_rmse:.4f}   "
+            f"MAE {self.exact_mae:.4f}   bound violations {self.bound_violation_rate:.4f}",
+            f"  |   {'endpoint':<8} {'n exact':>9} {'RMSE':>8} {'floor':>7} "
+            f"{'x floor':>8} {'MAE':>7} {'n cens':>8} {'viol':>7}",
+        ]
+        for endpoint in ENDPOINT_ORDER:
+            entry = self.per_endpoint.get(endpoint.value, {})
+            exact = int(entry.get("n_exact", 0))
+            censored = int(entry.get("n_censored", 0))
+            if not exact and not censored:
+                continue
+            floor = floors[endpoint.value]
+            rmse = entry.get("rmse")
+            lines.append(
+                f"  |   {endpoint.value:<8} {exact:>9,} "
+                + (f"{rmse:>8.4f} {floor:>7.3f} {rmse / floor:>8.2f} " if rmse else
+                   f"{'-':>8} {floor:>7.3f} {'-':>8} ")
+                + (f"{entry['mae']:>7.4f} " if entry.get("mae") else f"{'-':>7} ")
+                + f"{censored:>8,} "
+                + (f"{entry['bound_violation_rate']:>7.3f}"
+                   if entry.get("bound_violation_rate") is not None and censored
+                   else f"{'-':>7}")
+            )
+        return NEWLINE.join(lines)
 
 
 class _MetricAccumulator:
@@ -290,6 +366,21 @@ class _MetricAccumulator:
             target["n_censored"] += censored
             if censored:
                 target["violations"] += entry.get("bound_violation_rate", 0.0) * censored
+
+    def snapshot(self) -> dict[str, float]:
+        """Epoch-to-date figures for a progress line.
+
+        Running totals, not the last batch: a single batch can be 1 pair or 256,
+        so its loss says very little about where the epoch is.
+        """
+        return {
+            "loss": self.loss_sum / max(1, self.n_pairs),
+            "exact_rmse": math.sqrt(self.squared_error / max(1, self.n_exact)),
+            "bound_violation_rate": self.violations / max(1, self.n_censored),
+            "n_pairs": self.n_pairs,
+            "n_exact": self.n_exact,
+            "n_censored": self.n_censored,
+        }
 
     def report(self, epoch: int, split: str, seconds: float) -> EpochReport:
         per_endpoint = {}
@@ -385,16 +476,23 @@ class Trainer:
             train_loader.set_epoch(epoch)
             report = self._train_epoch(train_loader)
             self.history.append(report.to_dict())
-            print(report.summary(), flush=True)
+            print(report.table(), flush=True)
 
             if val_loader is not None:
                 validation = self.evaluate(val_loader, split="val")
                 self.history.append(validation.to_dict())
-                print(validation.summary(), flush=True)
+                print(validation.table(), flush=True)
                 if on_epoch:
                     on_epoch(validation)
                 improved = self._record_best(validation)
                 stale = 0 if improved else stale + 1
+                marker = "BEST" if improved else f"no improvement ({stale}/{self.config.patience})"
+                print(
+                    f"  +-- val {self.config.selection_metric} "
+                    f"{getattr(validation, self.config.selection_metric):.4f}"
+                    f" | best {self.best_metric:.4f} | {marker}",
+                    flush=True,
+                )
                 if self.config.patience and stale >= self.config.patience:
                     print(
                         f"early stop: {self.config.selection_metric} has not improved "
@@ -410,6 +508,9 @@ class Trainer:
         self.model.train()
         metrics = _MetricAccumulator()
         started = time.perf_counter()
+        n_batches = len(loader)
+        if self.device.type == "cuda":
+            torch.cuda.reset_peak_memory_stats(self.device)
         for index, batch in enumerate(loader):
             batch = batch.to(self.device)
             self.optimizer.zero_grad(set_to_none=True)
@@ -436,13 +537,54 @@ class Trainer:
                 self.ema.update(self.model)
             self.global_step += 1
             metrics.update(loss, batch)
-            if self.config.log_every and index % self.config.log_every == 0:
-                print(
-                    f"  step {self.global_step} loss {float(loss.total):.4f} "
-                    f"lr {self.optimizer.param_groups[0]['lr']:.2e}",
-                    flush=True,
-                )
+            if self.config.log_every and (
+                index % self.config.log_every == 0 or index == n_batches - 1
+            ):
+                self._log_step(index, n_batches, metrics, started)
         return metrics.report(self.epoch, "train", time.perf_counter() - started)
+
+    def _log_step(
+        self, index: int, n_batches: int, metrics: "_MetricAccumulator", started: float
+    ) -> None:
+        """One progress line: where the epoch is, how fast, and how it is doing.
+
+        Reports epoch-to-date running metrics rather than the current batch,
+        and an ETA from the rate actually achieved so far rather than from the
+        first few steps, which are always slower.
+        """
+        elapsed = time.perf_counter() - started
+        done = index + 1
+        rate = metrics.n_pairs / max(1e-9, elapsed)
+        remaining = (n_batches - done) * (elapsed / done)
+        running = metrics.snapshot()
+        floors = noise_floor_table()
+
+        per_endpoint = []
+        for endpoint in ENDPOINT_ORDER:
+            entry = metrics.per_endpoint[endpoint.value]
+            if entry["n_exact"]:
+                rmse = math.sqrt(entry["sq"] / entry["n_exact"])
+                per_endpoint.append(
+                    f"{endpoint.value} {rmse:.3f}/{rmse / floors[endpoint.value]:.2f}x"
+                )
+
+        memory = ""
+        if self.device.type == "cuda":
+            memory = f" | {torch.cuda.max_memory_allocated(self.device) / 2**30:.1f}G"
+
+        print(
+            f"  e{self.epoch} {done:>5}/{n_batches} ({100 * done / n_batches:5.1f}%)"
+            f" step {self.global_step:>6}"
+            f" | loss {running['loss']:.4f}"
+            f" rmse {running['exact_rmse']:.3f}"
+            f" viol {running['bound_violation_rate']:.3f}"
+            f" | {running['n_exact']:,}ex {running['n_censored']:,}cen"
+            f" | {rate:5.0f} pair/s"
+            f" | {_duration(elapsed)} elapsed, {_duration(remaining)} left"
+            f" | lr {self.optimizer.param_groups[0]['lr']:.2e}{memory}"
+            + (" | " + " ".join(per_endpoint) if per_endpoint else ""),
+            flush=True,
+        )
 
     @torch.no_grad()
     def evaluate(

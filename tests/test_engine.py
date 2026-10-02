@@ -247,7 +247,10 @@ class TestMetrics:
         report = trainer.evaluate(_FakeLoader([_batch()], "val"))
         payload = report.to_dict()
         assert payload["noise_floor"]["Ki"] == 0.641
-        assert "x floor" in report.summary()
+        # The short line carries the ratio; the full table carries the floor.
+        assert "(10." in report.summary() or "x)" in report.summary()
+        assert "x floor" in report.table()
+        assert "0.641" in report.table()
 
     def test_exact_and_censored_are_never_summed(self):
         trainer = Trainer(_model(), TrainingConfig(ema_decay=0.0))
@@ -387,3 +390,55 @@ class TestEarlyStopping:
         )
         with pytest.raises(TrainingError, match="not on EpochReport"):
             trainer.fit(_FakeLoader([_batch()]), _FakeLoader([_batch(seed=1)], "val"))
+
+
+class TestEMAWarmup:
+    """Without a warmup the shadow is the random initialisation for a long time.
+
+    At decay 0.999 the EMA after 66 steps is still 94% initial weights, so
+    validation scores an untrained model: the first smoke run reported val RMSE
+    6.48 against train 1.84, with val MAE almost equal to val RMSE, which is the
+    signature of a constant offset rather than of overfitting. Model selection
+    over the early epochs would have been meaningless.
+    """
+
+    def test_the_effective_decay_starts_low_and_rises(self):
+        ema = ExponentialMovingAverage(nn.Linear(2, 2), decay=0.999, warmup=10)
+        first = ema.effective_decay()
+        for _ in range(50):
+            ema.update(nn.Linear(2, 2))
+        assert first < 0.2
+        assert first < ema.effective_decay() <= 0.999
+
+    def test_it_never_exceeds_the_configured_decay(self):
+        ema = ExponentialMovingAverage(nn.Linear(2, 2), decay=0.9, warmup=10)
+        for _ in range(500):
+            ema.update(nn.Linear(2, 2))
+        assert ema.effective_decay() == pytest.approx(0.9)
+
+    def test_the_shadow_tracks_the_weights_within_a_few_steps(self):
+        """The property the smoke run violated."""
+        model = nn.Linear(4, 4)
+        with torch.no_grad():
+            model.weight.fill_(0.0)
+        ema = ExponentialMovingAverage(model, decay=0.999, warmup=10)
+        with torch.no_grad():
+            model.weight.fill_(5.0)
+        for _ in range(30):
+            ema.update(model)
+        # Without warmup this would still be ~0.15 after 30 steps at 0.999.
+        assert float(ema.shadow["weight"].mean()) > 4.0
+
+    def test_the_step_count_survives_a_checkpoint(self, tmp_path):
+        """Otherwise resuming restarts the warmup and undoes the averaging."""
+        model = nn.Linear(4, 4)
+        ema = ExponentialMovingAverage(model, decay=0.999, warmup=10)
+        for _ in range(40):
+            ema.update(model)
+        state = ema.state_dict()
+        assert state["steps"] == 40
+
+        fresh = ExponentialMovingAverage(nn.Linear(4, 4), decay=0.999, warmup=10)
+        fresh.load_state_dict(state)
+        assert fresh.steps == 40
+        assert fresh.effective_decay() == pytest.approx(ema.effective_decay())

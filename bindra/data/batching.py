@@ -276,18 +276,39 @@ class PairDataset:
         constructs = constructs.join(sequences, on="sequence_ref").drop_duplicates(
             "sequence_sha256"
         )
+        # Join only the *length* per observation, never the sequence itself.
+        # There are 10,820 distinct constructs behind 2.7M observations, and a
+        # construct averages ~500 residues: broadcasting the sequence string
+        # across the observation axis would carry roughly a gigabyte of
+        # duplicated text for information that 10,820 rows already hold.
         observations = observations.merge(
-            constructs[["sequence_sha256", "sequence", "sequence_length"]],
+            constructs[["sequence_sha256", "sequence_length"]],
             on="sequence_sha256",
             how="inner",
         )
-
         self.frame = observations.reset_index(drop=True)
         self.lengths = self.frame["sequence_length"].to_numpy().astype(int)
-        #: Cache keys, computed once. The key is a hash over the sequence and the
-        #: encoder contract, and recomputing it per batch dominated a first
-        #: version of this loader.
-        self._keys = [self._metadata.cache_key(s) for s in self.frame["sequence"]]
+
+        # One cache key per distinct construct, then an integer per observation
+        # pointing at it. Hashing is over the sequence and the encoder contract,
+        # so it is far too expensive to redo per batch and pointless to redo per
+        # observation.
+        unique = constructs.drop_duplicates("sequence_sha256")
+        key_by_hash = {
+            digest: self._metadata.cache_key(sequence)
+            for digest, sequence in zip(unique["sequence_sha256"], unique["sequence"])
+        }
+        self._unique_keys = list(dict.fromkeys(key_by_hash.values()))
+        position = {key: index for index, key in enumerate(self._unique_keys)}
+        self._key_index = np.fromiter(
+            (position[key_by_hash[d]] for d in self.frame["sequence_sha256"]),
+            dtype=np.int32,
+            count=len(self.frame),
+        )
+
+    def cache_key(self, row: int) -> str:
+        """Protein cache key for one observation row."""
+        return self._unique_keys[int(self._key_index[row])]
 
     def __len__(self) -> int:
         return len(self.frame)
@@ -311,7 +332,9 @@ class PairDataset:
                     f"{smiles!r} is in the curated corpus but will not featurize: {exc}"
                 ) from exc
 
-        features = [self.protein_cache.get(self._keys[i]).residue_features for i in indices]
+        features = [
+            self.protein_cache.get(self.cache_key(i)).residue_features for i in indices
+        ]
         width = max(int(f.shape[0]) for f in features)
         dim = int(features[0].shape[1])
         # Padded in the cache's own bf16, not upcast here. Converting on the CPU

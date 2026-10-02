@@ -67,3 +67,4 @@ prospective/**/*unblind*
 .DS_Store
 Thumbs.db
 desktop.ini
+runs/
