@@ -1,0 +1,14 @@
+{
+  "downloaded_at": "2026-10-02T01:25:00+00:00",
+  "file_name": "BindingDB_All_202610_tsv.zip",
+  "members": [
+    "BindingDB_All.tsv"
+  ],
+  "notes": "Release reports 3,248,380 measurements / 1,446,269 compounds / 11,516 targets. Fetched from rwd/bind/downloads/ direct path; the Download.jsp wrapper returns an HTML page with HTTP 200.",
+  "parser_version": "bindingdb-parser-v0",
+  "release": "202610",
+  "server_last_modified": "Wed, 30 Sep 2026 03:16:08 GMT",
+  "sha256": "e968f90e900c7833d5e6eceae282d0ca3b75201448bccaf4df6b09cc410f7d76",
+  "size_bytes": 594284548,
+  "source_url": "https://www.bindingdb.org/rwd/bind/downloads/BindingDB_All_202610_tsv.zip"
+}

@@ -55,4 +55,5 @@ markers = [
     "owed: a spec requirement that is scaffolded but not yet implemented",
     "gpu: requires a working CUDA device",
     "encoders: requires downloaded pretrained encoder weights",
+    "snapshot: requires the downloaded BindingDB snapshot",
 ]
