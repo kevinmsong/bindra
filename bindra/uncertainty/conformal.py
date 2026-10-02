@@ -1,0 +1,25 @@
+"""Split-conformal calibration, endpoint-specific.
+
+Status: scaffolded. See docs/STATUS.md.
+
+Owed by the specification:
+    Priority 4: return an insufficient-calibration status rather than a
+    fabricated finite interval when the order statistic is unsupported.
+"""
+
+from __future__ import annotations
+
+_SPEC_CLAUSE = (
+    "Priority 4: return an insufficient-calibration status rather than a fabricated finite interval when the order statistic is unsupported."
+)
+
+
+def _not_implemented(what: str) -> "NotImplementedError":
+    return NotImplementedError(
+        f"{what} is scaffolded but not implemented.\n"
+        f"Specification requirement: {_SPEC_CLAUSE}\n"
+        "See docs/STATUS.md for the current stage."
+    )
+
+
+__all__ = ["_not_implemented"]

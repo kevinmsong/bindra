@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Environments
+.venv/
+envs/*/.venv/
+
+# Data, caches and model weights are large and/or licensed; they are
+# reproduced from the recorded snapshot metadata, not committed.
+data/raw/
+data/processed/
+data/cache/
+data/snapshots/
+*.pt
+*.safetensors
+*.npy
+*.npz
+*.parquet
+*.tsv
+*.tsv.gz
+
+# Split manifests and benchmark manifests ARE committed: they are small,
+# and immutability is the point.
+!data/splits/**/*.json
+!data/benchmarks/**/*.json
+
+# Run outputs
+checkpoints/
+logs/
+results/
+outputs/
+wandb/
+
+# Prospective study keys must never be committed: unblinding assignments
+# would defeat the blinded design.
+prospective/**/assignment_key*
+prospective/**/*unblind*
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
