@@ -1,0 +1,6 @@
+{"at": "2026-10-02T16:21:52.769419+00:00", "regime": "random_pair", "seed": 20261001, "split_id": "random_pair-a109e51b"}
+{"at": "2026-10-02T16:22:30.709209+00:00", "regime": "cold_drug", "seed": 20261001, "split_id": "cold_drug-1685ccb1"}
+{"at": "2026-10-02T16:23:51.465032+00:00", "regime": "cold_target", "seed": 20261001, "split_id": "cold_target-c75d09fc"}
+{"at": "2026-10-02T16:24:29.568782+00:00", "regime": "cold_target_strict", "seed": 20261001, "split_id": "cold_target_strict-20e5bceb"}
+{"at": "2026-10-02T16:25:32.370679+00:00", "regime": "double_cold", "seed": 20261001, "split_id": "double_cold-711031b2"}
+{"at": "2026-10-02T16:29:02.941390+00:00", "regime": "temporal", "seed": 20261001, "split_id": "temporal-3c6f166d"}

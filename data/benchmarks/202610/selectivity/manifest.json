@@ -1,0 +1,106 @@
+{
+  "attrition": {
+    "different_assay_panel": 372080
+  },
+  "contains_test_labels": true,
+  "controls": null,
+  "counts": {
+    "controls": 0,
+    "labels": 1716186,
+    "queries": 1716186,
+    "unknowns": 1009606
+  },
+  "created_at": "2026-10-02T17:37:00.315713+00:00",
+  "definition": {
+    "comparable_panel_tier": 1,
+    "declared_baselines": [
+      "ligand_only_mean",
+      "constant_zero"
+    ],
+    "endpoints": [
+      "Kd",
+      "Ki",
+      "IC50"
+    ],
+    "ic50_requires_tier_a": true,
+    "include_swapped_controls": true,
+    "panel_key_fields": [
+      "citation_key",
+      "endpoint",
+      "assay_condition_bucket",
+      "curation_source_class"
+    ],
+    "related_coverage_min": 0.5,
+    "related_identity_min": 0.25,
+    "require_exact_both": true,
+    "seed_pairs_sha256": "27104eb82239d47285c0d58a687de1c557c71e7844474d1904130071b3f1d908"
+  },
+  "definition_sha256": "6dba7361f51ba6f33ea49f4f",
+  "inputs": {
+    "curation_profile_hash": "7c6be7537fcc43d19ffcd060",
+    "error_model": {
+      "IC50": 0.671,
+      "Kd": 0.945,
+      "Ki": 0.641
+    },
+    "observations_combined_sha256": "4f9a41d373ccb1326c453e4424c41cb4407fd16617e9d0b4a6fa8eb9b4c60e94",
+    "observations_row_count": 2739920,
+    "protein_relation_sha256": "2aa3019a68d34f9f9c56009eb9ccc68c1b358f3739cbaccb3d0abffb9fcc7acd",
+    "snapshot_release": "202610",
+    "source_classes_sha256": "998e1bcdfa365beb4625c806df733e9ac9f489bba75ad90eddf95b45bafa26aa"
+  },
+  "labels": {
+    "backend": "parquet",
+    "columns": [
+      "triple_id",
+      "p_target",
+      "p_countertarget",
+      "selectivity",
+      "swapped"
+    ],
+    "path": "data/benchmarks/202610/selectivity/sealed/labels.parquet",
+    "rows": 1716186,
+    "sha256": "d97bfdc4cf120d7b4dcecc891a9cc843ecba064a655f6e64ad64d68a15a6da02"
+  },
+  "manifest_sha256": "bf2596e7577c15a147eab721f15e43ec183c42c90b72c3ce07459be7e0453e0e",
+  "notes": [
+    "A missing countertarget measurement is UNKNOWN, never a negative. Those rows are in the unknowns table and carry no label.",
+    "Every triple has a swapped control with the negated label, so sign consistency is measurable.",
+    "Declared baselines a result must beat: a ligand-only predictor that ignores both targets, and constant zero.",
+    "Both members share one comparability group (tier 1), the tightest proxy available given BindingDB has no assay identifier."
+  ],
+  "panel": "selectivity",
+  "queries": {
+    "backend": "parquet",
+    "columns": [
+      "triple_id",
+      "identity_key",
+      "target",
+      "countertarget",
+      "endpoint",
+      "evidence",
+      "relation_label",
+      "comparability_group_id",
+      "swapped"
+    ],
+    "path": "data/benchmarks/202610/selectivity/queries.parquet",
+    "rows": 1716186,
+    "sha256": "ac8c2ad84cd8ec283b28a3c75cc50cbd18e2496bd52133c5bec1f213a6b08572"
+  },
+  "schema_version": "benchmark-v1",
+  "unknowns": {
+    "backend": "parquet",
+    "columns": [
+      "triple_id",
+      "identity_key",
+      "measured_target",
+      "unmeasured_target",
+      "endpoint",
+      "evidence",
+      "reason"
+    ],
+    "path": "data/benchmarks/202610/selectivity/unknowns.parquet",
+    "rows": 1009606,
+    "sha256": "0e0e9e0eb182508a806beaec71ba68bb846d8ec84b96f0e542964cf95e2ca4e6"
+  }
+}

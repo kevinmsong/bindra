@@ -1,0 +1,160 @@
+{
+  "audit": {
+    "all_gating_checks_passed": true,
+    "balance": {
+      "cal": {
+        "censored": 34092,
+        "exact": 147582,
+        "n_observations": 181674
+      },
+      "test": {
+        "censored": 70702,
+        "exact": 480244,
+        "n_observations": 550946
+      },
+      "train": {
+        "censored": 402248,
+        "exact": 1423378,
+        "n_observations": 1825626
+      },
+      "val": {
+        "censored": 34028,
+        "exact": 147646,
+        "n_observations": 181674
+      }
+    },
+    "checks": [
+      {
+        "check": "pair_integrity",
+        "examples": [],
+        "gating": true,
+        "n_checked": 2137647,
+        "n_violations": 0,
+        "passed": true
+      },
+      {
+        "check": "exact_identity_disjoint",
+        "examples": [],
+        "gating": true,
+        "n_checked": 1251284,
+        "n_violations": 0,
+        "passed": true
+      },
+      {
+        "check": "leakage_key_disjoint",
+        "examples": [],
+        "gating": true,
+        "n_checked": 1168513,
+        "n_violations": 0,
+        "passed": true
+      },
+      {
+        "check": "scaffold_disjoint",
+        "examples": [],
+        "gating": true,
+        "n_checked": 422489,
+        "n_violations": 0,
+        "passed": true
+      },
+      {
+        "check": "set_algebra",
+        "examples": [],
+        "gating": true,
+        "n_checked": 2739920,
+        "n_violations": 0,
+        "passed": true
+      }
+    ],
+    "regime": "cold_drug"
+  },
+  "counts": {
+    "cal": {
+      "n_ligands": 127407,
+      "n_observations": 181674,
+      "n_pairs": 164575,
+      "n_targets": 4667
+    },
+    "quarantine": {
+      "n_observations": 0
+    },
+    "test": {
+      "n_ligands": 213659,
+      "n_observations": 550946,
+      "n_pairs": 405299,
+      "n_targets": 6340
+    },
+    "train": {
+      "n_ligands": 782889,
+      "n_observations": 1825626,
+      "n_pairs": 1403403,
+      "n_targets": 9485
+    },
+    "val": {
+      "n_ligands": 127329,
+      "n_observations": 181674,
+      "n_pairs": 164370,
+      "n_targets": 4648
+    }
+  },
+  "created_at": "2026-10-02T16:22:25.082896+00:00",
+  "fractions": {
+    "cal": 0.1,
+    "test": 0.1,
+    "train": 0.7,
+    "val": 0.1
+  },
+  "id_files": {
+    "cal": {
+      "n": 181674,
+      "path": "cal.txt.gz",
+      "sha256": "ee311fb65a1972d57b41b2e2b10ee67e5d371faa9355809d60696d83e7dcb6a4"
+    },
+    "test": {
+      "n": 550946,
+      "path": "test.txt.gz",
+      "sha256": "4fbe8bb4a96e814eae38675bafc62aee9c3862302321ff13b3270f642a4e8946"
+    },
+    "train": {
+      "n": 1825626,
+      "path": "train.txt.gz",
+      "sha256": "b3c061d6ae9e0bdf5fe2bd0e774a83080f9766f49537b7f80a7b4d0b07ee3ff7"
+    },
+    "val": {
+      "n": 181674,
+      "path": "val.txt.gz",
+      "sha256": "959aabadd0d9175b3a0ddc7247db9a716eceb9698fcd09556a4d4592690a09df"
+    }
+  },
+  "inputs": {
+    "alignment_mode": "semi_global",
+    "curation_profile_hash": "7c6be7537fcc43d19ffcd060",
+    "n_preassigned_test_groups": 13541,
+    "observations_combined_sha256": "4f9a41d373ccb1326c453e4424c41cb4407fd16617e9d0b4a6fa8eb9b4c60e94",
+    "observations_row_count": 2739920,
+    "preassigned_test_groups_sha256": "775a0af715d8e7ffb80908cf4081b1af7d7d5891272e0690fd4ef900d0f9727a",
+    "protein_cold_target_identity_threshold": 0.6,
+    "protein_coverage_threshold": 0.8,
+    "protein_identity_threshold": 0.4,
+    "protein_relation_sha256": "2aa3019a68d34f9f9c56009eb9ccc68c1b358f3739cbaccb3d0abffb9fcc7acd",
+    "snapshot_release": "202610",
+    "source_classes_sha256": "998e1bcdfa365beb4625c806df733e9ac9f489bba75ad90eddf95b45bafa26aa"
+  },
+  "manifest_sha256": "3004994b7f266d9b2a771f8120e8e9114b671c8c450aa583e842dce9f46bd54d",
+  "policy": {
+    "assignment": "largest_remainder_weighted_binpack",
+    "double_cold_cascade": true,
+    "double_cold_independent": true,
+    "identity_ambiguity_margin": 0.0,
+    "temporal_cutoff": "2023-12-31",
+    "temporal_nested": true,
+    "temporal_train_cutoff": "2022-12-31"
+  },
+  "quarantine": {
+    "attrition": {},
+    "n_observations": 0
+  },
+  "regime": "cold_drug",
+  "schema_version": "split-v1",
+  "seed": 20261001,
+  "split_id": "cold_drug-1685ccb1"
+}

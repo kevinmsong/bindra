@@ -1,0 +1,120 @@
+{
+  "attrition": {
+    "decoy_shortfall": 122336,
+    "n_actives": 81971,
+    "n_actives_before_cap": 786222,
+    "n_decoys": 1926939,
+    "n_measured_inactives": 37187,
+    "n_targets_capped": 2515,
+    "n_targets_considered": 14619,
+    "n_targets_locked": 3721,
+    "per_endpoint": {
+      "IC50": 2224,
+      "Kd": 414,
+      "Ki": 1083
+    },
+    "targets_without_enough_actives": 10898,
+    "targets_without_measured_inactives": 1198
+  },
+  "contains_test_labels": true,
+  "controls": null,
+  "counts": {
+    "controls": 0,
+    "labels": 119158,
+    "queries": 2046097,
+    "unknowns": 1926939
+  },
+  "created_at": "2026-10-02T17:49:46.254725+00:00",
+  "definition": {
+    "active_p_min": 7.0,
+    "decoys_per_active": 25,
+    "endpoints": [
+      "Kd",
+      "Ki",
+      "IC50"
+    ],
+    "exclude_by_protein_group": true,
+    "ic50_requires_tier_a": true,
+    "inactive_p_max": 5.0,
+    "match_columns": [
+      "molecular_weight",
+      "clogp",
+      "tpsa",
+      "formal_charge",
+      "rotatable_bonds"
+    ],
+    "match_tolerances": [
+      25.0,
+      1.0,
+      20.0,
+      0.0,
+      2.0
+    ],
+    "max_actives_per_target": 25,
+    "min_actives_per_target": 10,
+    "require_exact": true,
+    "seed": 20261001
+  },
+  "definition_sha256": "dd5aca7b004f37e7d0541b11",
+  "inputs": {
+    "curation_profile_hash": "7c6be7537fcc43d19ffcd060",
+    "error_model": {
+      "IC50": 0.671,
+      "Kd": 0.945,
+      "Ki": 0.641
+    },
+    "observations_combined_sha256": "4f9a41d373ccb1326c453e4424c41cb4407fd16617e9d0b4a6fa8eb9b4c60e94",
+    "observations_row_count": 2739920,
+    "protein_relation_sha256": "2aa3019a68d34f9f9c56009eb9ccc68c1b358f3739cbaccb3d0abffb9fcc7acd",
+    "snapshot_release": "202610",
+    "source_classes_sha256": "998e1bcdfa365beb4625c806df733e9ac9f489bba75ad90eddf95b45bafa26aa"
+  },
+  "labels": {
+    "backend": "parquet",
+    "columns": [
+      "target",
+      "endpoint",
+      "identity_key",
+      "binding_status",
+      "p_value"
+    ],
+    "path": "data/benchmarks/202610/fishing/sealed/labels.parquet",
+    "rows": 119158,
+    "sha256": "bdd26451a867d1814da04fcb5c3dd0451f1f4e3450b2181c75b9bc2715f4bd6a"
+  },
+  "manifest_sha256": "51748a1c8b0f6b2866ab795cad244c8804c473645a29f0aa9d38dd2e0d55d0e5",
+  "notes": [
+    "Two control tiers, deliberately separate. measured_inactive are experimentally measured weak/inactive compounds and are real negatives. property_matched_decoy are PRESUMED controls with unknown binding status; they carry no affinity label and appear only in the unknowns table.",
+    "Decoy exclusion is homologue-aware: a candidate measured against any construct in the target's protein group is excluded, because the same protein appears here as many constructs.",
+    "DUD-E-style decoys favour 2D similarity methods, so any enrichment number must be reported alongside fingerprint-similarity and property-only baselines.",
+    "Report target-only fishing separately from seed-assisted fishing: a known binder given as a seed is chemical information, not zero-shot discovery.",
+    "Metrics are computed over the FULL locked pool, counting actives missed by any retrieval or shortlisting stage."
+  ],
+  "panel": "fishing",
+  "queries": {
+    "backend": "parquet",
+    "columns": [
+      "target",
+      "endpoint",
+      "identity_key",
+      "tier"
+    ],
+    "path": "data/benchmarks/202610/fishing/queries.parquet",
+    "rows": 2046097,
+    "sha256": "b30882a750cb5356270502e52623320226c9bb177924d64bb3390585ff048b65"
+  },
+  "schema_version": "benchmark-v1",
+  "unknowns": {
+    "backend": "parquet",
+    "columns": [
+      "target",
+      "endpoint",
+      "identity_key",
+      "tier",
+      "binding_status"
+    ],
+    "path": "data/benchmarks/202610/fishing/unknowns.parquet",
+    "rows": 1926939,
+    "sha256": "9830597a0f4f525f2108120222addacd6352b0378a1add1960bf983a1420eb97"
+  }
+}

@@ -1,0 +1,87 @@
+{
+  "attrition": {},
+  "contains_test_labels": true,
+  "controls": null,
+  "counts": {
+    "controls": 0,
+    "labels": 1161343,
+    "queries": 1161343,
+    "unknowns": 0
+  },
+  "created_at": "2026-10-02T17:37:01.465447+00:00",
+  "definition": {
+    "comparable_panel_tier": 1,
+    "declared_baselines": [
+      "ligand_only_mean",
+      "constant_zero"
+    ],
+    "endpoints": [
+      "Kd",
+      "Ki",
+      "IC50"
+    ],
+    "ic50_requires_tier_a": true,
+    "include_swapped_controls": true,
+    "panel_key_fields": [
+      "citation_key",
+      "endpoint",
+      "assay_condition_bucket",
+      "curation_source_class"
+    ],
+    "related_coverage_min": 0.5,
+    "related_identity_min": 0.25,
+    "require_exact_both": true,
+    "seed_pairs_sha256": "27104eb82239d47285c0d58a687de1c557c71e7844474d1904130071b3f1d908"
+  },
+  "definition_sha256": "6dba7361f51ba6f33ea49f4f",
+  "inputs": {
+    "curation_profile_hash": "7c6be7537fcc43d19ffcd060",
+    "error_model": {
+      "IC50": 0.671,
+      "Kd": 0.945,
+      "Ki": 0.641
+    },
+    "observations_combined_sha256": "4f9a41d373ccb1326c453e4424c41cb4407fd16617e9d0b4a6fa8eb9b4c60e94",
+    "observations_row_count": 2739920,
+    "protein_relation_sha256": "2aa3019a68d34f9f9c56009eb9ccc68c1b358f3739cbaccb3d0abffb9fcc7acd",
+    "snapshot_release": "202610",
+    "source_classes_sha256": "998e1bcdfa365beb4625c806df733e9ac9f489bba75ad90eddf95b45bafa26aa"
+  },
+  "labels": {
+    "backend": "parquet",
+    "columns": [
+      "triple_id",
+      "selectivity_lower_bound",
+      "selectivity_upper_bound",
+      "target_is_exact",
+      "countertarget_is_exact"
+    ],
+    "path": "data/benchmarks/202610/censored_selectivity/sealed/labels.parquet",
+    "rows": 1161343,
+    "sha256": "1279fd0bc3c6362d7af9bdfdffd4e1e41c58a5d9877f442f9c589e20ccebbafb"
+  },
+  "manifest_sha256": "94dc0166787616097f909c4e12dfbea67d08886717f51fd263a2bd4e27900fe5",
+  "notes": [
+    "Selectivity here is an INTERVAL, because at least one side is a censored bound. 'More than 100-fold selective' is a real datum and is not collapsed to a point.",
+    "Scored against interval-aware metrics only; these rows must not be pooled with the exact panel."
+  ],
+  "panel": "censored_selectivity",
+  "queries": {
+    "backend": "parquet",
+    "columns": [
+      "triple_id",
+      "identity_key",
+      "target",
+      "countertarget",
+      "endpoint",
+      "evidence",
+      "relation_label",
+      "comparability_group_id"
+    ],
+    "path": "data/benchmarks/202610/censored_selectivity/queries.parquet",
+    "rows": 1161343,
+    "sha256": "6e8d261fa7792921c1cdd92c1c126a66e6a4cee9b468af59de272f0e8dce9153"
+  },
+  "schema_version": "benchmark-v1",
+  "unknowns": null
+}

@@ -29,6 +29,14 @@ data/cache/
 !data/splits/**/*.json
 !data/benchmarks/**/*.json
 
+# The split ID lists ARE committed too, deliberately, at ~38 MB gzipped. The
+# whole discipline of this project is that the splits are locked and immutable;
+# a split that only exists if you can re-run the builder against an 8.4 GB
+# BindingDB snapshot is not locked in any useful sense. Each manifest carries
+# the sha256 of its own ID files, so a rebuild can be checked byte-for-byte
+# against what is here.
+!data/splits/**/*.txt.gz
+
 # Snapshots: commit the JSON records, never the archives. Order matters --
 # re-include the directories first so git can descend into them, then allow
 # only .json. Un-ignoring the directory itself (!data/snapshots/) would admit

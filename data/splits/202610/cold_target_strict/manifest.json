@@ -1,0 +1,156 @@
+{
+  "audit": {
+    "all_gating_checks_passed": true,
+    "balance": {
+      "cal": {
+        "censored": 2035,
+        "exact": 12831,
+        "n_observations": 14866
+      },
+      "test": {
+        "censored": 3705,
+        "exact": 11161,
+        "n_observations": 14866
+      },
+      "train": {
+        "censored": 532818,
+        "exact": 2162503,
+        "n_observations": 2695321
+      },
+      "val": {
+        "censored": 2512,
+        "exact": 12355,
+        "n_observations": 14867
+      }
+    },
+    "checks": [
+      {
+        "check": "pair_integrity",
+        "examples": [],
+        "gating": true,
+        "n_checked": 2137647,
+        "n_violations": 0,
+        "passed": true
+      },
+      {
+        "check": "target_sequence_disjoint",
+        "examples": [],
+        "gating": true,
+        "n_checked": 10463,
+        "n_violations": 0,
+        "passed": true
+      },
+      {
+        "check": "protein_homology",
+        "examples": [],
+        "gating": true,
+        "identity_threshold": 0.4,
+        "n_checked": 7273133,
+        "n_never_aligned": 0,
+        "n_qualifying_across_partitions": 0,
+        "n_violations": 0,
+        "note": "A pair that was never aligned is itself a violation: otherwise an absent edge could mean 'verified dissimilar' or 'never looked'.",
+        "passed": true
+      },
+      {
+        "check": "set_algebra",
+        "examples": [],
+        "gating": true,
+        "n_checked": 2739920,
+        "n_violations": 0,
+        "passed": true
+      }
+    ],
+    "regime": "cold_target"
+  },
+  "counts": {
+    "cal": {
+      "n_ligands": 11936,
+      "n_observations": 14866,
+      "n_pairs": 12325,
+      "n_targets": 243
+    },
+    "quarantine": {
+      "n_observations": 0
+    },
+    "test": {
+      "n_ligands": 12229,
+      "n_observations": 14866,
+      "n_pairs": 12583,
+      "n_targets": 253
+    },
+    "train": {
+      "n_ligands": 1226666,
+      "n_observations": 2695321,
+      "n_pairs": 2099956,
+      "n_targets": 9734
+    },
+    "val": {
+      "n_ligands": 12465,
+      "n_observations": 14867,
+      "n_pairs": 12783,
+      "n_targets": 233
+    }
+  },
+  "created_at": "2026-10-02T16:24:25.546012+00:00",
+  "fractions": {
+    "cal": 0.1,
+    "test": 0.1,
+    "train": 0.7,
+    "val": 0.1
+  },
+  "id_files": {
+    "cal": {
+      "n": 14866,
+      "path": "cal.txt.gz",
+      "sha256": "96626bacbaaa460600dd599cedbf0c6d08bb0dee216afbf91024aa0b1dc118e7"
+    },
+    "test": {
+      "n": 14866,
+      "path": "test.txt.gz",
+      "sha256": "2cb9f2e5b39823366eb4de51adabdd873b00bf1babfddca77b55839368b7e59d"
+    },
+    "train": {
+      "n": 2695321,
+      "path": "train.txt.gz",
+      "sha256": "c3fd5fdcc657fe421f3cbcadf60b633b0b0efe4dcdd4334f1eb0c4b39f80c5c1"
+    },
+    "val": {
+      "n": 14867,
+      "path": "val.txt.gz",
+      "sha256": "a832343e28b55d9d8b3e9d838125250a43f84db2080696d9a6f2673914ef1f79"
+    }
+  },
+  "inputs": {
+    "alignment_mode": "semi_global",
+    "curation_profile_hash": "7c6be7537fcc43d19ffcd060",
+    "n_preassigned_test_groups": 13541,
+    "observations_combined_sha256": "4f9a41d373ccb1326c453e4424c41cb4407fd16617e9d0b4a6fa8eb9b4c60e94",
+    "observations_row_count": 2739920,
+    "preassigned_test_groups_sha256": "775a0af715d8e7ffb80908cf4081b1af7d7d5891272e0690fd4ef900d0f9727a",
+    "protein_cold_target_identity_threshold": 0.6,
+    "protein_coverage_threshold": 0.8,
+    "protein_identity_threshold": 0.4,
+    "protein_relation_sha256": "2aa3019a68d34f9f9c56009eb9ccc68c1b358f3739cbaccb3d0abffb9fcc7acd",
+    "snapshot_release": "202610",
+    "source_classes_sha256": "998e1bcdfa365beb4625c806df733e9ac9f489bba75ad90eddf95b45bafa26aa"
+  },
+  "manifest_sha256": "26e5f40481b93335a58b23ff19187ea6e666ca717a767d590bb77afc7e45031d",
+  "policy": {
+    "assignment": "largest_remainder_weighted_binpack",
+    "double_cold_cascade": true,
+    "double_cold_independent": true,
+    "identity_ambiguity_margin": 0.0,
+    "temporal_cutoff": "2023-12-31",
+    "temporal_nested": true,
+    "temporal_train_cutoff": "2022-12-31"
+  },
+  "quarantine": {
+    "attrition": {},
+    "n_observations": 0
+  },
+  "regime": "cold_target_strict",
+  "schema_version": "split-v1",
+  "seed": 20261001,
+  "split_id": "cold_target_strict-20e5bceb"
+}

@@ -1,0 +1,176 @@
+{
+  "audit": {
+    "all_gating_checks_passed": true,
+    "balance": {
+      "cal": {
+        "censored": 13639,
+        "exact": 45456,
+        "n_observations": 59095
+      },
+      "test": {
+        "censored": 61749,
+        "exact": 165765,
+        "n_observations": 227514
+      },
+      "train": {
+        "censored": 408752,
+        "exact": 1761461,
+        "n_observations": 2170213
+      },
+      "val": {
+        "censored": 13569,
+        "exact": 35154,
+        "n_observations": 48723
+      }
+    },
+    "checks": [
+      {
+        "check": "pair_integrity",
+        "examples": [],
+        "gating": true,
+        "n_checked": 2035282,
+        "n_violations": 0,
+        "passed": true
+      },
+      {
+        "check": "set_algebra",
+        "examples": [],
+        "gating": true,
+        "n_checked": 2739920,
+        "n_violations": 0,
+        "passed": true
+      },
+      {
+        "check": "temporal_integrity",
+        "examples": [],
+        "gating": true,
+        "n_checked": 75819,
+        "n_future_labels_in_fitting_partitions": 0,
+        "n_future_labels_in_train": 0,
+        "n_reimports": 75819,
+        "n_reimports_misplaced": 0,
+        "n_violations": 0,
+        "passed": true
+      }
+    ],
+    "regime": "temporal"
+  },
+  "counts": {
+    "cal": {
+      "n_ligands": 35478,
+      "n_observations": 59095,
+      "n_pairs": 53859,
+      "n_targets": 919
+    },
+    "quarantine": {
+      "n_ligands": 54409,
+      "n_observations": 198748,
+      "n_pairs": 90365,
+      "n_targets": 3997
+    },
+    "repeated_measurement": {
+      "n_ligands": 9279,
+      "n_observations": 35627,
+      "n_pairs": 12000,
+      "n_targets": 429
+    },
+    "test": {
+      "n_ligands": 145401,
+      "n_observations": 227514,
+      "n_pairs": 210265,
+      "n_targets": 1247
+    },
+    "train": {
+      "n_ligands": 994720,
+      "n_observations": 2170213,
+      "n_pairs": 1725659,
+      "n_targets": 8125
+    },
+    "val": {
+      "n_ligands": 26841,
+      "n_observations": 48723,
+      "n_pairs": 45499,
+      "n_targets": 983
+    }
+  },
+  "created_at": "2026-10-02T16:28:59.188708+00:00",
+  "fractions": {
+    "cal": 0.1,
+    "test": 0.1,
+    "train": 0.7,
+    "val": 0.1
+  },
+  "id_files": {
+    "cal": {
+      "n": 59095,
+      "path": "cal.txt.gz",
+      "sha256": "7c87d9f43e201ac00ad1c78ef1b6af194832deba549f940da9423a843b03031c"
+    },
+    "quarantine": {
+      "n": 198748,
+      "path": "quarantine.txt.gz",
+      "sha256": "5ac492bea2a5168d1e87677d131dc53d0e28cb1bf46b4eecddd3444bb0d51757"
+    },
+    "repeated_measurement": {
+      "n": 35627,
+      "path": "repeated_measurement.txt.gz",
+      "sha256": "c661678b8eeb7d7f62afdf7e66d0e97e234a843f720f64b63eb33d172c949fe6"
+    },
+    "test": {
+      "n": 227514,
+      "path": "test.txt.gz",
+      "sha256": "188eba2fc464c6d9db9bb3f1bf71f203f36d756185add0a38f137c72e20edd07"
+    },
+    "train": {
+      "n": 2170213,
+      "path": "train.txt.gz",
+      "sha256": "f6e5e7b88d097133548cd2ed74a4b8cf040bc6277d7ede122a3d94d9619c6dcc"
+    },
+    "val": {
+      "n": 48723,
+      "path": "val.txt.gz",
+      "sha256": "d936abe45f62725816348acfbb36e9b97acf6df4cb6131a74f98bdfadf2d895c"
+    }
+  },
+  "inputs": {
+    "alignment_mode": "semi_global",
+    "curation_profile_hash": "7c6be7537fcc43d19ffcd060",
+    "n_preassigned_test_groups": 13541,
+    "observations_combined_sha256": "4f9a41d373ccb1326c453e4424c41cb4407fd16617e9d0b4a6fa8eb9b4c60e94",
+    "observations_row_count": 2739920,
+    "preassigned_test_groups_sha256": "775a0af715d8e7ffb80908cf4081b1af7d7d5891272e0690fd4ef900d0f9727a",
+    "protein_cold_target_identity_threshold": 0.6,
+    "protein_coverage_threshold": 0.8,
+    "protein_identity_threshold": 0.4,
+    "protein_relation_sha256": "2aa3019a68d34f9f9c56009eb9ccc68c1b358f3739cbaccb3d0abffb9fcc7acd",
+    "snapshot_release": "202610",
+    "source_classes_sha256": "998e1bcdfa365beb4625c806df733e9ac9f489bba75ad90eddf95b45bafa26aa"
+  },
+  "manifest_sha256": "1b1909664731622544e56979aee86107ecbb482eb0102290a97e0866a4a99a60",
+  "policy": {
+    "assignment": "largest_remainder_weighted_binpack",
+    "double_cold_cascade": true,
+    "double_cold_independent": true,
+    "identity_ambiguity_margin": 0.0,
+    "temporal_cutoff": "2023-12-31",
+    "temporal_nested": true,
+    "temporal_train_cutoff": "2022-12-31"
+  },
+  "quarantine": {
+    "attrition": {
+      "cal": 59095,
+      "input": 2739920,
+      "pairs_with_unknown_date": 66272,
+      "quarantine": 198748,
+      "repeated_measurement": 35627,
+      "test": 227514,
+      "train": 2170213,
+      "val": 48723
+    },
+    "n_observations": 198748
+  },
+  "regime": "temporal",
+  "schema_version": "split-v1",
+  "seed": 20261001,
+  "split_id": "temporal-3c6f166d"
+}

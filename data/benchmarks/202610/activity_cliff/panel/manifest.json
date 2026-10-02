@@ -1,0 +1,104 @@
+{
+  "attrition": {
+    "candidates": 241406,
+    "dropped_not_in_test": 129874,
+    "locked": 111532
+  },
+  "contains_test_labels": true,
+  "controls": null,
+  "counts": {
+    "controls": 0,
+    "labels": 111532,
+    "queries": 111532,
+    "unknowns": 0
+  },
+  "created_at": "2026-10-02T17:31:14.232104+00:00",
+  "definition": {
+    "comparability_tier": 1,
+    "delta_floor": 1.0,
+    "delta_sigma_multiple": 2.0,
+    "endpoints": [
+      "Kd",
+      "Ki",
+      "IC50"
+    ],
+    "fingerprint": "morgan",
+    "fingerprint_identical_threshold": 0.999,
+    "generic_scaffold_threshold": 0.8,
+    "ic50_requires_tier_a": true,
+    "max_member_replicate_spread_sigma": 1.0,
+    "min_delta_over_pooled_spread": 2.0,
+    "n_bits": 2048,
+    "noncliff_delta_max": 0.5,
+    "preassign_series_to_test": true,
+    "radius": 2,
+    "rdkit_version": "2026.03.6",
+    "require_exact_both": true,
+    "series_unit": "drug_group",
+    "similarity": "tanimoto",
+    "tanimoto_threshold": 0.9,
+    "use_chirality": false
+  },
+  "definition_sha256": "b643f7603ac5b76637a5e3e9",
+  "inputs": {
+    "curation_profile_hash": "7c6be7537fcc43d19ffcd060",
+    "error_model": {
+      "IC50": 0.671,
+      "Kd": 0.945,
+      "Ki": 0.641
+    },
+    "observations_combined_sha256": "4f9a41d373ccb1326c453e4424c41cb4407fd16617e9d0b4a6fa8eb9b4c60e94",
+    "observations_row_count": 2739920,
+    "protein_relation_sha256": "2aa3019a68d34f9f9c56009eb9ccc68c1b358f3739cbaccb3d0abffb9fcc7acd",
+    "snapshot_release": "202610",
+    "source_classes_sha256": "998e1bcdfa365beb4625c806df733e9ac9f489bba75ad90eddf95b45bafa26aa"
+  },
+  "labels": {
+    "backend": "parquet",
+    "columns": [
+      "pair_id",
+      "label",
+      "p_value_a",
+      "p_value_b",
+      "delta_p",
+      "abs_delta_p",
+      "pooled_replicate_spread",
+      "cliff_threshold",
+      "sigma_rep"
+    ],
+    "path": "data/benchmarks/202610/activity_cliff/panel/sealed/labels.parquet",
+    "rows": 111532,
+    "sha256": "2b937ddb8bb035c743f3cc6a57b24c9cfbe9102fe80c57d38284d146e4804a33"
+  },
+  "manifest_sha256": "6044453017a346aa171d3f33d70e4b70b9e5d5e8c74a2edbd1fcff15cc5aff71",
+  "notes": [
+    "cliff_kind is a prespecified diagnostic category. 'stereochemical' and 'fingerprint_blind' pairs are indistinguishable to an ECFP4-equivalent ligand representation, so metrics must be reported per kind rather than pooled.",
+    "Cliff magnitude is endpoint-specific: max(1.0, 2 * sigma_rep). A flat 1 p-unit threshold would sit inside measurement noise for pKd (sigma_rep 0.945).",
+    "Both members share one comparability group (tier 1). BindingDB has no assay identifier, so that is the tightest available proxy, and the panel is small as a result.",
+    "Both members are exact: a delta computed from a censored bound is not a measured difference.",
+    "Both cliff members and their whole drug group are held out of training.",
+    "Labels are sealed; they exist to score frozen predictions."
+  ],
+  "panel": "activity_cliff",
+  "queries": {
+    "backend": "parquet",
+    "columns": [
+      "pair_id",
+      "cliff_kind",
+      "endpoint",
+      "sequence_sha256",
+      "identity_key_a",
+      "identity_key_b",
+      "observation_a",
+      "observation_b",
+      "comparability_group_id",
+      "tanimoto",
+      "same_generic_framework"
+    ],
+    "path": "data/benchmarks/202610/activity_cliff/panel/queries.parquet",
+    "rows": 111532,
+    "sha256": "18208b1222b78b5caf3058f357bd5fdef04b366913545120f51a5e2fefd3b13e"
+  },
+  "schema_version": "benchmark-v1",
+  "unknowns": null
+}

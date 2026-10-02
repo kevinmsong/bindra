@@ -96,42 +96,88 @@ def _check_vram(device) -> bool:
     return True
 
 
-def _check_esmc(device, enabled: bool) -> bool | None:
-    """Load ESM-C-600M and embed a short sequence. Returns None when skipped."""
+def _check_esmc(device, enabled: bool, *, verify_weights: bool = False) -> bool | None:
+    """Encode a short sequence through the real adapter. None when skipped.
+
+    This deliberately goes through :class:`ESMCProteinEncoder` rather than
+    calling ``esm`` directly. ``doctor`` gates the feature-cache run, so it has
+    to exercise the code path that populates the cache -- including the pinned
+    revision, the post-LayerNorm tensor selected by name, and special-token
+    stripping via the tokenizer's own mask. An earlier version of this check
+    used the deprecated ``ESMC`` shim and ``output.embeddings``, which are the
+    three defects ``docs/MIGRATION.md`` records as fixed: it could have passed
+    while the adapter was broken, or vice versa.
+    """
     if not enabled:
         print(f"[{SKIP}] ESM-C forward pass (use --esmc to run it)")
         return None
 
-    import torch
+    from bindra.encoders.protein_esmc import (
+        ESMC_600M_WEIGHTS_SHA256,
+        EXPECTED_ESMC_600M_DIM,
+        ESMCProteinEncoder,
+        ProteinEncoderError,
+        detect_kernel_backends,
+    )
+
+    sequence = "MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQ"
+    encoder = ESMCProteinEncoder(device=device)
 
     try:
-        from esm.models.esmc import ESMC
-        from esm.tokenization import EsmSequenceTokenizer
-    except ImportError as exc:
-        print(f"[{SKIP}] ESM-C not installed ({exc}); install the 'encoders' extra")
-        return None
-
-    try:
-        sequence = "MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQ"
-        model = ESMC.from_pretrained("esmc_600m").to(device).eval()
-        tokenizer = EsmSequenceTokenizer()
-        tokens = torch.tensor([tokenizer.encode(sequence)], device=device)
-        with torch.inference_mode():
-            output = model(tokens)
-        embeddings = output.embeddings
-        print(
-            f"[{OK}] ESM-C-600M forward pass: {tuple(embeddings.shape)} "
-            f"({embeddings.dtype}) for a {len(sequence)}-residue sequence"
-        )
-        if embeddings.shape[-1] != 1152:
-            print(
-                f"[{FAIL}] expected a 1152-dim ESM-C-600M embedding, got {embeddings.shape[-1]}"
-            )
-            return False
-        return True
-    except Exception as exc:  # noqa: BLE001 - diagnostic surface
-        print(f"[{FAIL}] ESM-C forward pass failed: {type(exc).__name__}: {exc}")
+        features = encoder.encode(sequence)
+    except ProteinEncoderError as exc:
+        # Missing weights or a missing 'esm' install is a skip, not a failure:
+        # the data layer and the test suite are installable without them.
+        if "is required for the ESM-C encoder" in str(exc):
+            print(f"[{SKIP}] {exc}")
+            return None
+        print(f"[{FAIL}] ESM-C encode failed: {exc}")
         return False
+    except Exception as exc:  # noqa: BLE001 - diagnostic surface
+        print(f"[{FAIL}] ESM-C encode failed: {type(exc).__name__}: {exc}")
+        return False
+
+    shape = tuple(features.residue_features.shape)
+    print(
+        f"[{OK}] ESM-C-600M encode: {shape} ({features.residue_features.dtype}) "
+        f"for a {len(sequence)}-residue sequence"
+    )
+
+    ok = True
+    if features.feature_dim != EXPECTED_ESMC_600M_DIM:
+        print(
+            f"[{FAIL}] expected a {EXPECTED_ESMC_600M_DIM}-dim embedding, "
+            f"got {features.feature_dim}"
+        )
+        ok = False
+    if shape[0] != len(sequence):
+        print(f"[{FAIL}] expected {len(sequence)} residue rows, got {shape[0]}")
+        ok = False
+    if not features.covers_full_sequence:
+        print(f"[{FAIL}] encoder did not cover every residue of the input")
+        ok = False
+
+    backends = detect_kernel_backends()
+    print(
+        f"[{OK}] kernel backends: {', '.join(backends) if backends else 'none (pure PyTorch)'}"
+        "  (part of the cache key)"
+    )
+    print(f"[{OK}] pinned revision {encoder.revision}")
+
+    if verify_weights:
+        # Hashing the state dict is seconds of work but reads every parameter,
+        # so it is opt-in rather than part of the default gate.
+        checksum = encoder.weights_checksum()
+        if checksum == ESMC_600M_WEIGHTS_SHA256:
+            print(f"[{OK}] weights checksum matches the pinned digest")
+        else:
+            print(
+                f"[{FAIL}] weights checksum {checksum[:16]}... does not match the "
+                f"pinned {ESMC_600M_WEIGHTS_SHA256[:16]}...; the HF cache may be "
+                "corrupt or locally overridden"
+            )
+            ok = False
+    return ok
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -149,6 +195,11 @@ def main(argv: list[str] | None = None) -> int:
         "--esmc",
         action="store_true",
         help="Also load ESM-C-600M and run a forward pass (downloads weights on first use).",
+    )
+    parser.add_argument(
+        "--verify-weights",
+        action="store_true",
+        help="With --esmc, also hash the state dict and compare it to the pinned digest.",
     )
     args = parser.parse_args(argv)
 
@@ -172,12 +223,12 @@ def main(argv: list[str] | None = None) -> int:
     results = [
         _check_vram(device),
         _check_bf16_matmul(device),
-        _check_esmc(device, args.esmc),
+        _check_esmc(device, args.esmc, verify_weights=args.verify_weights),
     ]
     print()
 
     if any(result is False for result in results):
-        print("doctor: FAILED — see above.")
+        print("doctor: FAILED - see above.")
         return 1
     print("doctor: environment is fit for GPU training.")
     return 0

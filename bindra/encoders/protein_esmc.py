@@ -186,6 +186,7 @@ class ESMCProteinEncoder:
         overlap: int = 256,
         model: Any | None = None,
         tokenizer: Any | None = None,
+        n_trainable_layers: int = 0,
     ) -> None:
         self.checkpoint = checkpoint
         self.revision = revision
@@ -193,6 +194,28 @@ class ESMCProteinEncoder:
         self.precision = precision
         self.context_limit = context_limit
         self.overlap = overlap
+        if n_trainable_layers < 0:
+            raise ValueError(
+                f"n_trainable_layers must be >= 0, got {n_trainable_layers}"
+            )
+        #: How many trailing transformer blocks to leave trainable, plus the
+        #: final LayerNorm above them. **Default 0: frozen.** That is what
+        #: makes the 14.023 GiB protein cache valid, and it removes the
+        #: target-grouped batching requirement entirely -- with cached features
+        #: a random batch is free, where a trainable encoder forces 43+ hours
+        #: per epoch. Partial fine-tuning is implemented and tested; it is an
+        #: ablation to run against a baseline, not a starting configuration.
+        #:
+        #: **Unfreezing has a statistical cost that the throughput numbers do not
+        #: show.** Each ESM-C block is 15,932,160 parameters. The corpus has
+        #: 10,474 observed targets but a Kish effective sample size of **572
+        #: target units**, so one unfrozen block is roughly 27,900 trainable
+        #: parameters per effective independent target (three would be 83,000). The protein axis is where this corpus is
+        #: poorest, and fine-tuning there fits the encoder to the targets rather
+        #: than to the interaction. The split audit cannot detect it: a model that
+        #: has memorised a target family still scores well on held-out *ligands*
+        #: for those targets, and only the cold-target regimes would show it.
+        self.n_trainable_layers = n_trainable_layers
 
         # Two special tokens (<cls>, <eos>) are added per window, so the usable
         # residue window is smaller than the raw context limit.
@@ -205,6 +228,13 @@ class ESMCProteinEncoder:
         self._model = model
         self._tokenizer = tokenizer
         self._output_dim: int | None = None
+        self._weights_checksum_cache: str | None = None
+        #: True when the caller supplied the model rather than letting the adapter
+        #: load the pinned checkpoint. Injected models are test doubles or custom
+        #: builds, so their identity is the caller's to assert, and metadata() does
+        #: not try to hash them.
+        self._model_injected = model is not None
+        self.apply_freezing()
 
     # -- lazy loading -----------------------------------------------------
 
@@ -233,6 +263,99 @@ class ESMCProteinEncoder:
             self._model = (
                 EsmcModel.from_pretrained(self.checkpoint, **load_kwargs).to(self.device).eval()
             )
+        self.apply_freezing()
+
+    # -- partial fine-tuning ----------------------------------------------
+
+    def transformer_blocks(self) -> Any:
+        """The ``ModuleList`` of transformer blocks, located rather than assumed.
+
+        ESM-C exposes them at ``transformer.blocks``, but a test double or a
+        future release may not, so this looks for the stack instead of indexing a
+        hardcoded path and silently freezing nothing.
+        """
+        model = self._model
+        if model is None:
+            raise ProteinEncoderError("model is not loaded")
+        blocks = getattr(getattr(model, "transformer", None), "blocks", None)
+        if blocks is None:
+            for module in model.modules():
+                if isinstance(module, torch.nn.ModuleList) and len(module) > 1:
+                    blocks = module
+                    break
+        if blocks is None:
+            raise ProteinEncoderError(
+                "could not locate the transformer block stack; refusing to guess "
+                "which parameters to unfreeze"
+            )
+        return blocks
+
+    def apply_freezing(self) -> None:
+        """Freeze everything but the trailing ``n_trainable_layers`` blocks.
+
+        Called from ``__init__`` and again after a checkpoint load, so an
+        encoder is never in a state its ``n_trainable_layers`` does not
+        describe. A model the caller injected that is not an ``nn.Module`` --
+        a test double or a plain callable -- is left alone, since its parameters
+        are the caller's to manage.
+
+        The final LayerNorm is unfrozen alongside them, because it sits above the
+        trainable blocks and the features are read *after* it; leaving it fixed
+        would force the unfrozen blocks to preserve a normalisation statistic
+        they are otherwise free to change.
+
+        Embeddings and lower blocks stay frozen in every partial regime.
+        """
+        if self._model is None or not hasattr(self._model, "parameters"):
+            return
+        for parameter in self._model.parameters():
+            parameter.requires_grad_(False)
+        if not self.n_trainable_layers:
+            return
+        blocks = self.transformer_blocks()
+        if self.n_trainable_layers > len(blocks):
+            raise ProteinEncoderError(
+                f"n_trainable_layers={self.n_trainable_layers} exceeds the "
+                f"{len(blocks)} blocks this checkpoint has"
+            )
+        for block in blocks[-self.n_trainable_layers :]:
+            for parameter in block.parameters():
+                parameter.requires_grad_(True)
+        final_norm = getattr(getattr(self._model, "transformer", None), "norm", None)
+        if final_norm is not None:
+            for parameter in final_norm.parameters():
+                parameter.requires_grad_(True)
+
+    def trainable_parameters(self) -> list[torch.nn.Parameter]:
+        """Parameters an optimizer should receive. Empty when fully frozen."""
+        self._ensure_loaded()
+        return [p for p in self._model.parameters() if p.requires_grad]
+
+    @property
+    def n_trainable(self) -> int:
+        return sum(p.numel() for p in self.trainable_parameters())
+
+    @property
+    def is_frozen(self) -> bool:
+        return self.n_trainable_layers == 0
+
+    def assert_cacheable(self) -> None:
+        """Refuse to cache features from an encoder that is being trained.
+
+        The 14.023 GiB protein cache is valid only because the features are a
+        deterministic function of the sequence. One trainable block ends that,
+        and a cache written afterwards would be stale from the first optimizer
+        step with nothing to signal it -- the same failure the ligand cache
+        guards against, and more expensive here because re-encoding the corpus
+        takes 40 minutes.
+        """
+        if not self.is_frozen:
+            raise ProteinEncoderError(
+                f"this encoder has {self.n_trainable_layers} trainable block(s) "
+                f"({self.n_trainable:,} parameters), so its features are not a "
+                "function of the sequence alone and must not be cached. Set "
+                "n_trainable_layers=0 to cache, or encode live each step."
+            )
 
     @property
     def model(self) -> Any:
@@ -251,14 +374,34 @@ class ESMCProteinEncoder:
 
         The specification requires distinguishing a newer checkpoint from an
         older one carrying the same name; a name alone cannot do that.
+
+        Memoised, because :meth:`metadata` includes it in every cache key and
+        hashing the full state dict reads every parameter.
         """
+        if getattr(self, "_weights_checksum_cache", None) is not None:
+            return self._weights_checksum_cache  # type: ignore[return-value]
         digest = hashlib.sha256()
         for name, parameter in sorted(self.model.state_dict().items()):
             digest.update(name.encode("utf-8"))
             digest.update(parameter.detach().cpu().contiguous().view(torch.uint8).numpy().tobytes())
-        return digest.hexdigest()
+        self._weights_checksum_cache = digest.hexdigest()
+        return self._weights_checksum_cache
 
     def metadata(self, output_dim: int, *, weights_checksum: str | None = None) -> EncoderMetadata:
+        """Encoder identity, as it appears in every cache key.
+
+        ``weights_checksum`` defaults to the **actual** loaded weights rather than
+        to ``None``. Leaving it out of the key would mean a corrupted or locally
+        overridden checkpoint produced cache entries indistinguishable from the
+        pinned ones -- which is the whole failure the checksum exists to catch.
+        It also kept callers that built metadata independently from agreeing with
+        the metadata attached to encoded features.
+
+        Skipped only when the model was injected by the caller, which means a test
+        double or a custom build whose identity is the caller's to assert.
+        """
+        if weights_checksum is None and not self._model_injected:
+            weights_checksum = self.weights_checksum()
         return EncoderMetadata(
             name="esmc",
             checkpoint=self.checkpoint,
@@ -277,6 +420,21 @@ class ESMCProteinEncoder:
                 # Numerics depend on these, so they key the cache.
                 "kernel_backends": list(detect_kernel_backends()),
                 "api": "native-EsmcModel",
+                # A partially unfrozen encoder is a different contract: its
+                # features move as it trains, so they must never collide with
+                # frozen ones in a cache.
+                #
+                # Emitted **only when non-zero**, and that is not cosmetic. The
+                # key is a hash over this dict, so adding a field unconditionally
+                # would change the frozen encoder's key too and orphan the
+                # already-populated 14.023 GiB cache, which was written before
+                # this field existed. Frozen is the baseline contract and needs
+                # no marker; a deviation from it does.
+                **(
+                    {"n_trainable_layers": self.n_trainable_layers}
+                    if self.n_trainable_layers
+                    else {}
+                ),
             },
         )
 
@@ -320,9 +478,24 @@ class ESMCProteinEncoder:
         Long sequences are covered by overlapping windows and merged by
         averaging each residue's representations across the windows containing
         it. The merge is deterministic and the residue numbering is preserved.
+
+        The input must already be canonical (stripped, upper case). Upper-casing
+        here instead would make two spellings of one protein hash to two cache
+        keys holding identical features, so canonicalization belongs to the data
+        layer -- but the check is explicit, because the failure it prevents is
+        severe and its symptom is otherwise baffling: ESM-C tokenizes lower-case
+        residues to ``<unk>``, ``<unk>`` is a *special* token, and special-token
+        stripping therefore removes every position of the protein.
         """
         if not sequence:
             raise ProteinEncoderError("cannot encode an empty sequence")
+        if sequence != sequence.strip().upper():
+            raise ProteinEncoderError(
+                "sequence is not canonical (expected stripped and upper-case). "
+                "ESM-C maps lower-case residues to <unk>, which is a special "
+                "token, so every residue would be stripped. Normalize with "
+                "bindra.data.bindingdb.proteins.canonical_sequence first."
+            )
 
         plan = plan_windows(len(sequence), self.window_size, self.overlap)
 

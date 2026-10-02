@@ -1,0 +1,89 @@
+{
+  "attrition": {
+    "cal": 59095,
+    "input": 2739920,
+    "pairs_with_unknown_date": 66272,
+    "quarantine": 198748,
+    "repeated_measurement": 35627,
+    "test": 227514,
+    "train": 2170213,
+    "val": 48723
+  },
+  "contains_test_labels": true,
+  "controls": null,
+  "counts": {
+    "controls": 0,
+    "labels": 75819,
+    "queries": 75819,
+    "unknowns": 0
+  },
+  "created_at": "2026-10-02T17:35:02.841187+00:00",
+  "definition": {
+    "cal_window": [
+      "2023-07-01",
+      "2023-12-31"
+    ],
+    "cutoff": "2023-12-31",
+    "evidence_field": "date_published",
+    "exclude_unknown_date": true,
+    "pair_level": true,
+    "panel": "panel_reimport_control",
+    "straddling_pairs_separate_panel": true,
+    "train_cutoff": "2022-12-31",
+    "val_window": [
+      "2023-01-01",
+      "2023-06-30"
+    ]
+  },
+  "definition_sha256": "43c0fc9f127911decab26b0a",
+  "inputs": {
+    "curation_profile_hash": "7c6be7537fcc43d19ffcd060",
+    "error_model": {
+      "IC50": 0.671,
+      "Kd": 0.945,
+      "Ki": 0.641
+    },
+    "observations_combined_sha256": "4f9a41d373ccb1326c453e4424c41cb4407fd16617e9d0b4a6fa8eb9b4c60e94",
+    "observations_row_count": 2739920,
+    "protein_relation_sha256": "2aa3019a68d34f9f9c56009eb9ccc68c1b358f3739cbaccb3d0abffb9fcc7acd",
+    "snapshot_release": "202610",
+    "source_classes_sha256": "998e1bcdfa365beb4625c806df733e9ac9f489bba75ad90eddf95b45bafa26aa"
+  },
+  "labels": {
+    "backend": "parquet",
+    "columns": [
+      "observation_id",
+      "endpoint",
+      "p_value",
+      "is_exact",
+      "is_censored"
+    ],
+    "path": "data/benchmarks/202610/panel_reimport_control/sealed/labels.parquet",
+    "rows": 75819,
+    "sha256": "ca7603ead5fcc353ee3ba429cac51461a99c84c7b7a89ea6a81028e82288b9f6"
+  },
+  "manifest_sha256": "2c25391172fc39bc2decfc570e1aa423b664c68ea22e85f7a62f2495e308324e",
+  "notes": [
+    "panel_strict_future is the forward-looking test. panel_repeated_measurement is kept separate because a pair already measured before the cutoff is not a novel future observation.",
+    "panel_reimport_control is a positive control on real data: these observations predate the cutoff and were imported after it, and must never be scored as future evidence.",
+    "Unknown-date pairs are excluded from every temporal claim rather than assumed old or new.",
+    "The pretrained encoders may have seen test-set sequences or molecules as unlabelled pretraining data. This panel establishes that no labelled observation after the cutoff informed training, tuning or calibration. It does NOT establish that the pretrained system is historically clean, and that cannot be established from here."
+  ],
+  "panel": "panel_reimport_control",
+  "queries": {
+    "backend": "parquet",
+    "columns": [
+      "observation_id",
+      "pair_key",
+      "identity_key",
+      "sequence_sha256",
+      "endpoint",
+      "first_evidence_date"
+    ],
+    "path": "data/benchmarks/202610/panel_reimport_control/queries.parquet",
+    "rows": 75819,
+    "sha256": "f3d2260a4a0856552c9d725c37188a235bf0d8c23c97f559f51202d95e9dc341"
+  },
+  "schema_version": "benchmark-v1",
+  "unknowns": null
+}

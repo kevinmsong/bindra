@@ -16,6 +16,10 @@ import sys
 COMMANDS: dict[str, tuple[str, str]] = {
     "doctor": ("bindra.cli.doctor", "Check that this machine can train on the GPU."),
     "prepare-data": ("bindra.cli.prepare_data", "Ingest and curate a BindingDB snapshot."),
+    "lock-benchmarks": (
+        "bindra.cli.lock_benchmarks",
+        "Freeze the prespecified evaluation panels",
+    ),
     "make-splits": ("bindra.cli.make_splits", "Build immutable split manifests."),
     "cache": ("bindra.cli.cache", "Populate frozen encoder feature caches."),
     "train": ("bindra.cli.train", "Train the affinity / retrieval / diffusion stack."),
@@ -31,7 +35,7 @@ COMMANDS: dict[str, tuple[str, str]] = {
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="bindra",
-        description="BINDRA — Binding INference, Design, Retrieval, and Attention.",
+        description="BINDRA - Binding INference, Design, Retrieval, and Attention.",
         epilog="See docs/STATUS.md for what is actually implemented.",
     )
     parser.add_argument("command", choices=sorted(COMMANDS), help="subcommand to run")

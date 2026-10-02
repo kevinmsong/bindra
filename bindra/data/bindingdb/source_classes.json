@@ -1,0 +1,114 @@
+{
+  "schema_version": "source-classes-v1",
+  "authored_from": "data/processed/202610/ingest_stats.json (curation_sources census)",
+  "snapshot_release": "202610",
+  "authored_at": "2026-10-02",
+  "note": [
+    "Maps every distinct Curation/DataSource value in BindingDB 202610 to a class.",
+    "Authored AFTER the ingest census, because the census is what establishes that",
+    "the set of values is small and closed: exactly 9 values across 3,243,660 rows.",
+    "An unmapped value encountered later is a hard error, not an 'other' default --",
+    "a new release introducing a source must be classified deliberately, since the",
+    "class drives IC50 tiering and metadata confidence.",
+    "",
+    "This file is hashed into the curation profile, so a change to it invalidates",
+    "the artifacts produced under the previous mapping."
+  ],
+  "classes": {
+    "literature_curated": {
+      "description": "Measurements curated from a primary publication, with the assay described upstream even though BindingDB does not carry that description.",
+      "values": [
+        "ChEMBL",
+        "Curated from the literature by BindingDB"
+      ],
+      "row_counts": {
+        "ChEMBL": 1658237,
+        "Curated from the literature by BindingDB": 93085
+      }
+    },
+    "patent": {
+      "description": "Measurements transcribed from a patent examples table. Provenance is real and citable, but a patent record cannot evidence which biochemical assay produced a value, and one patent's table may span more than one protocol.",
+      "values": [
+        "US Patent",
+        "WIPO"
+      ],
+      "row_counts": {
+        "US Patent": 1349222,
+        "WIPO": 8766
+      }
+    },
+    "pubchem_bioassay": {
+      "description": "Imported from a PubChem BioAssay deposition. Often high-throughput screening output, where a single reported potency may come from a concentration series of very few points.",
+      "values": [
+        "PubChem"
+      ],
+      "row_counts": {
+        "PubChem": 102553
+      }
+    },
+    "screening_panel": {
+      "description": "A dedicated assay programme running one consistent protocol across many ligands. PDSP is radioligand binding and reports Ki only; it contributes no IC50, so IC50 tiering never applies to it.",
+      "values": [
+        "PDSP Ki"
+      ],
+      "row_counts": {
+        "PDSP Ki": 27715
+      }
+    },
+    "structure_challenge": {
+      "description": "Community structure-prediction and affinity-prediction challenge sets. Small, and their provenance is the challenge rather than a primary assay record.",
+      "values": [
+        "D3R",
+        "CSAR"
+      ],
+      "row_counts": {
+        "D3R": 2990,
+        "CSAR": 818
+      }
+    },
+    "other": {
+      "description": "Single-laboratory direct depositions that fit no class above.",
+      "values": [
+        "Taylor Research Group, UCSD"
+      ],
+      "row_counts": {
+        "Taylor Research Group, UCSD": 274
+      }
+    }
+  },
+  "policy": {
+    "ic50_tier_a_classes": [
+      "literature_curated",
+      "patent"
+    ],
+    "ic50_tier_a_rationale": [
+      "The specification admits IC50 to the primary regression only when the record",
+      "supports assignment to the intended protein and an appropriate biochemical",
+      "assay. literature_curated and patent records carry a citable primary source;",
+      "pubchem_bioassay, structure_challenge and other do not establish a biochemical",
+      "assay for the intended protein and go to the flagged tier.",
+      "",
+      "Tiering is keyed on this class, NEVER on PubChem AID presence. Measured: 68% of",
+      "rows carry an AID, including ~545k whose provenance is a US patent, so an",
+      "AID-based rule would misclassify most of the patent corpus."
+    ],
+    "metadata_confidence_high_classes": [
+      "literature_curated",
+      "screening_panel"
+    ],
+    "metadata_confidence_capped_at_medium_classes": [
+      "patent"
+    ],
+    "metadata_confidence_rationale": [
+      "A patent is capped at medium however complete its other fields are, because a",
+      "single patent examples table can hold thousands of IC50 values under more than",
+      "one protocol, so citation identity is a weaker proxy for assay identity there",
+      "than it is for a primary paper.",
+      "",
+      "Measured caveat worth carrying into the report: pooled within-publication",
+      "replicate SD is LOWER for patents than for literature (Kd 0.707 vs 1.019",
+      "p-units). That indicates re-statement of one table value rather than",
+      "independent measurement -- less independence, not better precision."
+    ]
+  }
+}

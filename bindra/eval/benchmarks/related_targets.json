@@ -1,0 +1,36 @@
+{
+  "schema_version": "related-targets-v1",
+  "authored_at": "2026-10-02",
+  "note": [
+    "Canonical target/countertarget pairs for the selectivity panel. This file is a",
+    "HUMAN POLICY INPUT, not a derived artifact: it is authored, hashed into the",
+    "panel manifest, and should be reviewed by someone with the relevant domain",
+    "knowledge before any selectivity claim is published.",
+    "",
+    "It is deliberately a supplement, not the primary mechanism. Relatedness is",
+    "derived first from the exhaustive alignment table (identity >= 0.25 with",
+    "coverage >= 0.50), which needs no curation at all. This list adds pairs that",
+    "medicinal chemistry treats as selectivity questions even where sequence",
+    "identity is modest, and names them explicitly.",
+    "",
+    "Failure mode is safe by construction: an accession that is wrong, obsolete or",
+    "absent from the corpus simply matches no construct, so it contributes no",
+    "pairs. A wrong entry cannot invent a selectivity pair, only miss one. The",
+    "panel report states how many listed pairs actually matched."
+  ],
+  "pairs": [
+    {"a": "P23219", "b": "P35354", "label": "COX-1 / COX-2", "basis": "classic NSAID selectivity"},
+    {"a": "P00915", "b": "P00918", "label": "CA-I / CA-II", "basis": "carbonic anhydrase isoforms"},
+    {"a": "P21397", "b": "P27338", "label": "MAO-A / MAO-B", "basis": "monoamine oxidase isoforms"},
+    {"a": "P22303", "b": "P06276", "label": "AChE / BChE", "basis": "cholinesterase selectivity"},
+    {"a": "P00533", "b": "P04626", "label": "EGFR / HER2", "basis": "ErbB family kinases"},
+    {"a": "P12931", "b": "P06239", "label": "SRC / LCK", "basis": "Src-family kinases"},
+    {"a": "P23458", "b": "O60674", "label": "JAK1 / JAK2", "basis": "JAK-family selectivity"},
+    {"a": "P00734", "b": "P00742", "label": "thrombin / factor Xa", "basis": "coagulation serine proteases"},
+    {"a": "P03372", "b": "Q92731", "label": "ER-alpha / ER-beta", "basis": "oestrogen receptor subtypes"},
+    {"a": "P14416", "b": "P35462", "label": "D2 / D3", "basis": "dopamine receptor subtypes"},
+    {"a": "P30542", "b": "P29274", "label": "A1 / A2A", "basis": "adenosine receptor subtypes"},
+    {"a": "Q13547", "b": "Q9UBN7", "label": "HDAC1 / HDAC6", "basis": "class I vs class IIb HDAC"},
+    {"a": "P08253", "b": "P14780", "label": "MMP-2 / MMP-9", "basis": "gelatinase selectivity"}
+  ]
+}

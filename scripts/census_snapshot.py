@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 import csv
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -47,7 +48,11 @@ def census(archive_path: Path, member: str, limit: int | None = None) -> dict:
     years: Counter[str] = Counter()
 
     unique_smiles: set[str] = set()
-    unique_sequences: set[int] = set()  # hashes, to bound memory
+    # Truncated sha256 rather than the builtin ``hash``, which is salted per
+    # process: the same snapshot would otherwise report a different unique
+    # count on every run, and a census is supposed to be reproducible. Eight
+    # bytes keeps memory bounded; collisions at ~11k sequences are negligible.
+    unique_sequences: set[bytes] = set()
 
     started = time.perf_counter()
     with zipfile.ZipFile(archive_path) as archive, archive.open(member) as raw:
@@ -85,7 +90,7 @@ def census(archive_path: Path, member: str, limit: int | None = None) -> dict:
 
             sequence = field(row, chain1_seq_at)
             if sequence:
-                unique_sequences.add(hash(sequence))
+                unique_sequences.add(hashlib.sha256(sequence.encode("utf-8")).digest()[:8])
             elif single_chain:
                 counts["single_chain_without_sequence"] += 1
 

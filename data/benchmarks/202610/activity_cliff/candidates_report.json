@@ -1,0 +1,96 @@
+{
+  "candidates": {
+    "backend": "parquet",
+    "columns": [
+      "pair_id",
+      "label",
+      "cliff_kind",
+      "endpoint",
+      "comparability_group_id",
+      "sequence_sha256",
+      "identity_key_a",
+      "identity_key_b",
+      "observation_a",
+      "observation_b",
+      "drug_group_a",
+      "drug_group_b",
+      "tanimoto",
+      "same_generic_framework",
+      "p_value_a",
+      "p_value_b",
+      "delta_p",
+      "abs_delta_p",
+      "pooled_replicate_spread",
+      "cliff_threshold",
+      "sigma_rep"
+    ],
+    "path": "data/benchmarks/202610/activity_cliff/candidates.parquet",
+    "rows": 241406,
+    "sha256": "aa0766b66258d57fbfc035ae310462579af9fc17523121b6b27806a6a16eb5bd"
+  },
+  "definition": {
+    "comparability_tier": 1,
+    "delta_floor": 1.0,
+    "delta_sigma_multiple": 2.0,
+    "endpoints": [
+      "Kd",
+      "Ki",
+      "IC50"
+    ],
+    "fingerprint": "morgan",
+    "fingerprint_identical_threshold": 0.999,
+    "generic_scaffold_threshold": 0.8,
+    "ic50_requires_tier_a": true,
+    "max_member_replicate_spread_sigma": 1.0,
+    "min_delta_over_pooled_spread": 2.0,
+    "n_bits": 2048,
+    "noncliff_delta_max": 0.5,
+    "preassign_series_to_test": true,
+    "radius": 2,
+    "rdkit_version": "2026.03.6",
+    "require_exact_both": true,
+    "series_unit": "drug_group",
+    "similarity": "tanimoto",
+    "tanimoto_threshold": 0.9,
+    "use_chirality": false
+  },
+  "report": {
+    "cliff_kinds": {
+      "fingerprint_blind": 2644,
+      "stereochemical": 15731,
+      "substitution": 16139
+    },
+    "n_candidate_pairs": 2443031,
+    "n_cliffs": 34514,
+    "n_groups_all_pairs": 103073,
+    "n_groups_considered": 139077,
+    "n_groups_too_small": 35897,
+    "n_groups_topk": 107,
+    "n_noncliffs": 206892,
+    "n_similar_pairs": 358586,
+    "per_endpoint": {
+      "IC50": {
+        "cliffs": 22419,
+        "noncliff_controls": 150062
+      },
+      "Kd": {
+        "cliffs": 702,
+        "noncliff_controls": 8885
+      },
+      "Ki": {
+        "cliffs": 11393,
+        "noncliff_controls": 47945
+      }
+    },
+    "rejected": {
+      "delta_in_dead_band": 101474,
+      "member_replicate_spread_too_wide": 15706,
+      "similarity_below_threshold": 2084445
+    },
+    "thresholds": {
+      "IC50": 1.342,
+      "Kd": 1.89,
+      "Ki": 1.282
+    }
+  }
+}

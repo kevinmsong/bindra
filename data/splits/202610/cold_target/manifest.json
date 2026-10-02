@@ -1,0 +1,165 @@
+{
+  "audit": {
+    "all_gating_checks_passed": true,
+    "balance": {
+      "cal": {
+        "censored": 55115,
+        "exact": 218877,
+        "n_observations": 273992
+      },
+      "test": {
+        "censored": 57529,
+        "exact": 216463,
+        "n_observations": 273992
+      },
+      "train": {
+        "censored": 371412,
+        "exact": 1546532,
+        "n_observations": 1917944
+      },
+      "val": {
+        "censored": 57014,
+        "exact": 216978,
+        "n_observations": 273992
+      }
+    },
+    "checks": [
+      {
+        "check": "pair_integrity",
+        "examples": [],
+        "gating": true,
+        "n_checked": 2137647,
+        "n_violations": 0,
+        "passed": true
+      },
+      {
+        "check": "target_sequence_disjoint",
+        "examples": [],
+        "gating": true,
+        "n_checked": 10463,
+        "n_violations": 0,
+        "passed": true
+      },
+      {
+        "check": "protein_homology",
+        "disclosure": {
+          "band": [
+            0.4,
+            0.6
+          ],
+          "gating": false,
+          "n_cross_partition_pairs_in_band": 17981,
+          "note": "Cross-partition construct pairs with identity in [0.4, 0.6). These are the homologues this regime's looser threshold permits to straddle a partition. Reported, not gated: the strict regime exists to bound claims about novel targets, and this number is what the looser regime costs."
+        },
+        "examples": [],
+        "gating": true,
+        "identity_threshold": 0.6,
+        "n_checked": 39517298,
+        "n_never_aligned": 0,
+        "n_qualifying_across_partitions": 0,
+        "n_violations": 0,
+        "note": "A pair that was never aligned is itself a violation: otherwise an absent edge could mean 'verified dissimilar' or 'never looked'.",
+        "passed": true
+      },
+      {
+        "check": "set_algebra",
+        "examples": [],
+        "gating": true,
+        "n_checked": 2739920,
+        "n_violations": 0,
+        "passed": true
+      }
+    ],
+    "regime": "cold_target"
+  },
+  "counts": {
+    "cal": {
+      "n_ligands": 184987,
+      "n_observations": 273992,
+      "n_pairs": 223360,
+      "n_targets": 2061
+    },
+    "quarantine": {
+      "n_observations": 0
+    },
+    "test": {
+      "n_ligands": 179159,
+      "n_observations": 273992,
+      "n_pairs": 221652,
+      "n_targets": 2168
+    },
+    "train": {
+      "n_ligands": 879500,
+      "n_observations": 1917944,
+      "n_pairs": 1468673,
+      "n_targets": 4132
+    },
+    "val": {
+      "n_ligands": 193508,
+      "n_observations": 273992,
+      "n_pairs": 223962,
+      "n_targets": 2102
+    }
+  },
+  "created_at": "2026-10-02T16:23:46.568550+00:00",
+  "fractions": {
+    "cal": 0.1,
+    "test": 0.1,
+    "train": 0.7,
+    "val": 0.1
+  },
+  "id_files": {
+    "cal": {
+      "n": 273992,
+      "path": "cal.txt.gz",
+      "sha256": "2d0d8d397c8a02e2c162f518e90f60e77afac3aed473a2bbaa543b32e2ac3558"
+    },
+    "test": {
+      "n": 273992,
+      "path": "test.txt.gz",
+      "sha256": "7920434fbc4efd42b10ccc6332741cdc510ba809071e760d9c59c03c861542bc"
+    },
+    "train": {
+      "n": 1917944,
+      "path": "train.txt.gz",
+      "sha256": "5274f53ba2c44b5e505b29fbd0abd22ef0865828f66106cd0bc69675fab59255"
+    },
+    "val": {
+      "n": 273992,
+      "path": "val.txt.gz",
+      "sha256": "270d41d4b652b81f390ef0eb0cb4cd22ae6d355bb161e47b54d24eab5bd045d6"
+    }
+  },
+  "inputs": {
+    "alignment_mode": "semi_global",
+    "curation_profile_hash": "7c6be7537fcc43d19ffcd060",
+    "n_preassigned_test_groups": 13541,
+    "observations_combined_sha256": "4f9a41d373ccb1326c453e4424c41cb4407fd16617e9d0b4a6fa8eb9b4c60e94",
+    "observations_row_count": 2739920,
+    "preassigned_test_groups_sha256": "775a0af715d8e7ffb80908cf4081b1af7d7d5891272e0690fd4ef900d0f9727a",
+    "protein_cold_target_identity_threshold": 0.6,
+    "protein_coverage_threshold": 0.8,
+    "protein_identity_threshold": 0.4,
+    "protein_relation_sha256": "2aa3019a68d34f9f9c56009eb9ccc68c1b358f3739cbaccb3d0abffb9fcc7acd",
+    "snapshot_release": "202610",
+    "source_classes_sha256": "998e1bcdfa365beb4625c806df733e9ac9f489bba75ad90eddf95b45bafa26aa"
+  },
+  "manifest_sha256": "a29e90385b40c7d1d01ae917a3c394d22fc11d9645fbcd2c07b0896db0657353",
+  "policy": {
+    "assignment": "largest_remainder_weighted_binpack",
+    "double_cold_cascade": true,
+    "double_cold_independent": true,
+    "identity_ambiguity_margin": 0.0,
+    "temporal_cutoff": "2023-12-31",
+    "temporal_nested": true,
+    "temporal_train_cutoff": "2022-12-31"
+  },
+  "quarantine": {
+    "attrition": {},
+    "n_observations": 0
+  },
+  "regime": "cold_target",
+  "schema_version": "split-v1",
+  "seed": 20261001,
+  "split_id": "cold_target-c75d09fc"
+}
