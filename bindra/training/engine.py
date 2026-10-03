@@ -487,6 +487,8 @@ class Trainer:
         self.global_step = 0
         #: Batches already consumed in the current epoch, for a mid-epoch resume.
         self.batch_in_epoch = 0
+        #: Batches dropped to OOM in the last epoch. Reported, never hidden.
+        self.skipped_batches = 0
         self.best_metric: float | None = None
         self.history: list[dict[str, Any]] = []
 
@@ -557,6 +559,8 @@ class Trainer:
             torch.cuda.reset_peak_memory_stats(self.device)
         waiting = 0.0
         micro = 0
+        skipped = 0
+        skipped_pairs = 0
         accumulate = self.config.accumulate_steps
         last_tick = time.perf_counter()
         skip = self.batch_in_epoch
@@ -573,24 +577,45 @@ class Trainer:
             # waiting on the loader. The split between this and compute is the
             # whole question when throughput disappoints.
             waiting += time.perf_counter() - last_tick
-            batch = batch.to(self.device)
             if micro == 0:
                 self.optimizer.zero_grad(set_to_none=True)
-            with torch.autocast(
-                self.device.type,
-                dtype=self.config.torch_amp_dtype,
-                enabled=self.config.use_amp and self.device.type == "cuda",
-            ):
-                output = self.model(
-                    batch.protein_features, batch.protein_mask, batch.ligands
+            try:
+                batch = batch.to(self.device)
+                with torch.autocast(
+                    self.device.type,
+                    dtype=self.config.torch_amp_dtype,
+                    enabled=self.config.use_amp and self.device.type == "cuda",
+                ):
+                    output = self.model(
+                        batch.protein_features, batch.protein_mask, batch.ligands
+                    )
+                    loss = affinity_loss(
+                        output.prediction, batch.targets, config=self.config.loss
+                    )
+                # Scaled so the accumulated gradient is the mean over
+                # micro-batches rather than their sum, which would scale the
+                # effective rate by accumulate_steps and undo the point of
+                # raising the batch.
+                (loss.total / accumulate).backward()
+            except torch.OutOfMemoryError:
+                # One batch is 1/22,044 of an epoch; the run is hours. Dying
+                # here to save a single batch is the wrong trade, so the batch
+                # is dropped, counted and reported -- never silently swallowed.
+                # The partial gradient from this accumulation group is discarded
+                # with it, so no half-batch contributes a skewed step.
+                skipped += 1
+                skipped_pairs += batch.size
+                del batch
+                self.optimizer.zero_grad(set_to_none=True)
+                micro = 0
+                torch.cuda.empty_cache()
+                print(
+                    f"  [oom] skipped batch {index} ({skipped} so far, "
+                    f"{skipped_pairs:,} pairs); emptied the cache and continued",
+                    flush=True,
                 )
-                loss = affinity_loss(
-                    output.prediction, batch.targets, config=self.config.loss
-                )
-            # Scaled so the accumulated gradient is the mean over micro-batches
-            # rather than their sum, which would scale the effective rate by
-            # accumulate_steps and undo the point of raising the batch.
-            (loss.total / accumulate).backward()
+                last_tick = time.perf_counter()
+                continue
             micro += 1
 
             grad_norm = None
@@ -627,6 +652,13 @@ class Trainer:
                 self.save_checkpoint("last.pt")
             last_tick = time.perf_counter()
         self.batch_in_epoch = 0
+        if skipped:
+            print(
+                f"  [oom] {skipped} batch(es), {skipped_pairs:,} pairs, were "
+                f"dropped this epoch for lack of memory",
+                flush=True,
+            )
+        self.skipped_batches = skipped
         return metrics.report(self.epoch, "train", time.perf_counter() - started)
 
     def _log_step(

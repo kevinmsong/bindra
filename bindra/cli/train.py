@@ -67,6 +67,25 @@ def _provenance(processed: Path, split_directory: Path, protein_metadata, ligand
 
 
 def cmd_fit(args) -> int:
+    import os
+
+    # Set before torch initialises CUDA, or it has no effect.
+    #
+    # Batch shapes here swing from [1, 34350] to [256, 256] because the residue
+    # budget trades pairs against protein length, and the default caching
+    # allocator fragments badly under that: it reserves segments sized for one
+    # shape and cannot serve the next, so a run dies hours in with free memory
+    # still showing. Expandable segments let a reservation grow instead of
+    # forcing a new one, which is exactly the variable-shape case it exists for.
+    # Not supported on Windows -- it warns and does nothing there -- so it is
+    # set only where it helps. On Windows the fragmentation is handled instead
+    # by BatchingPolicy.length_multiple, which bounds how many distinct tensor
+    # shapes a run can produce.
+    import sys as _sys
+
+    if not _sys.platform.startswith("win"):
+        os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
     import torch
 
     from bindra.data.batching import BatchingPolicy, PairDataset, PairLoader

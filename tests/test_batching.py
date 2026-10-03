@@ -264,11 +264,21 @@ class TestAgainstTheCuratedCorpus:
     def test_the_protein_mask_matches_the_real_sequence_lengths(self, dataset):
         from bindra.data.batching import PairLoader
 
-        batch = next(iter(PairLoader(dataset, BatchingPolicy())))
+        from bindra.data.batching import _round_up
+
+        policy = BatchingPolicy()
+        batch = next(iter(PairLoader(dataset, policy)))
         # Every row has at least one real residue and no row is all padding.
         counts = batch.protein_mask.sum(dim=1)
         assert (counts > 0).all()
-        assert int(counts.max()) == batch.padded_residues
+        # The padded width is the longest real sequence rounded up to the
+        # length multiple -- the rounding is what bounds shape diversity and
+        # keeps the allocator from fragmenting, so it is asserted rather than
+        # treated as slack.
+        assert batch.padded_residues == _round_up(
+            int(counts.max()), policy.length_multiple
+        )
+        assert batch.padded_residues - int(counts.max()) < max(1, policy.length_multiple)
 
     def test_the_whole_partition_is_covered_exactly_once(self, dataset):
         from bindra.data.batching import PairLoader
@@ -294,3 +304,80 @@ class TestAgainstTheCuratedCorpus:
         assert report["n_pairs"] == len(dataset)
         assert report["padding_fraction"] < 0.2
         assert report["residue_slots_max"] <= BatchingPolicy().residue_budget
+
+
+class TestShapeDiversity:
+    """Padded lengths are rounded to bound how many distinct shapes a run makes.
+
+    The first real training run died of CUDA OOM 63% into epoch 0, after 14,000
+    batches, with memory still free -- the signature of caching-allocator
+    fragmentation. No single batch was at fault: the worst shapes measured 1.40
+    GiB (1 x 34,350) and 2.90 GiB (256 x 256) against a 15.9 GiB card. The cause
+    was that every batch had its own padded length, so the allocator reserved a
+    segment per shape. ``expandable_segments:True``, the usual remedy, is not
+    supported on Windows.
+    """
+
+    def test_padded_lengths_are_rounded_to_the_multiple(self):
+        from bindra.data.batching import _round_up
+
+        assert _round_up(1, 128) == 128
+        assert _round_up(128, 128) == 128
+        assert _round_up(129, 128) == 256
+        assert _round_up(34350, 128) == 34432
+
+    def test_rounding_off_is_the_identity(self):
+        from bindra.data.batching import _round_up
+
+        assert _round_up(777, 0) == 777
+        assert _round_up(777, 1) == 777
+
+    def test_the_budget_is_respected_against_the_rounded_length(self):
+        """Otherwise rounding up could silently push a batch over the budget."""
+        policy = BatchingPolicy(residue_budget=4096, length_multiple=128)
+        lengths = list(np.random.default_rng(2).integers(50, 1500, 2000))
+        for batch in length_bucketed_batches(lengths, policy):
+            from bindra.data.batching import _round_up
+
+            padded = _round_up(max(lengths[i] for i in batch), policy.length_multiple)
+            assert padded * len(batch) <= policy.residue_budget or len(batch) == 1
+
+    def test_rounding_collapses_thousands_of_shapes_into_hundreds(self):
+        """The property that actually prevents the fragmentation."""
+        from bindra.data.batching import _round_up
+
+        # Continuously varied, like the real corpus: 10,820 constructs with
+        # almost as many distinct lengths. REALISTIC has only 7 values, so
+        # there would be nothing for rounding to collapse.
+        lengths = list(np.random.default_rng(4).integers(60, 3000, 6000))
+        rounded = BatchingPolicy(length_multiple=128)
+        plain = BatchingPolicy(length_multiple=0)
+
+        def shapes(policy):
+            return {
+                (len(b), _round_up(max(lengths[i] for i in b), policy.length_multiple))
+                for b in length_bucketed_batches(lengths, policy)
+            }
+
+        few, many = len(shapes(rounded)), len(shapes(plain))
+        assert few < many / 2, f"rounding gave {few} shapes against {many}"
+
+    def test_the_padding_cost_stays_modest(self):
+        """Rounding buys fewer shapes at the price of padding; bound the price."""
+        from bindra.data.batching import _round_up
+
+        lengths = REALISTIC * 20
+        policy = BatchingPolicy(length_multiple=128)
+        batches = length_bucketed_batches(lengths, policy)
+        slots = sum(
+            len(b) * _round_up(max(lengths[i] for i in b), 128) for b in batches
+        )
+        real = sum(lengths[i] for b in batches for i in b)
+        assert 1 - real / slots < 0.30
+
+    def test_a_negative_multiple_is_refused(self):
+        with pytest.raises(BatchingError, match="length_multiple"):
+            BatchingPolicy(length_multiple=-1)
+
+    def test_the_multiple_is_recorded_in_the_policy(self):
+        assert BatchingPolicy().to_dict()["length_multiple"] == 128

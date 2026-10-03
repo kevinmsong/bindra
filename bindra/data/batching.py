@@ -87,6 +87,18 @@ class BatchingPolicy:
     #: length-homogeneous without the epoch becoming length-ordered.
     shuffle_window: int = 8_192
     seed: int = 20261001
+    #: Padded protein length is rounded up to a multiple of this. The point is
+    #: allocator fragmentation, not padding: without it every batch has its own
+    #: ``padded_residues``, so the run produces thousands of distinct tensor
+    #: shapes, the CUDA caching allocator reserves a segment per shape and
+    #: eventually cannot serve a large request while still showing free memory.
+    #: That is what killed the first real run, 63% into epoch 0, after 14,000
+    #: batches. ``expandable_segments:True``, the usual remedy, is **not
+    #: supported on Windows**.
+    #:
+    #: 128 turns ~34,000 possible lengths into ~268 and costs ~8% more padding.
+    #: 0 disables the rounding.
+    length_multiple: int = 128
     #: Proteins longer than this are **reported and excluded**, never truncated.
     #: ``None`` keeps every construct, which is the default: a 34,350-residue
     #: protein simply gets a batch to itself.
@@ -100,6 +112,10 @@ class BatchingPolicy:
             raise BatchingError(f"max_pairs must be >= 1, got {self.max_pairs}")
         if self.shuffle_window < 1:
             raise BatchingError(f"shuffle_window must be >= 1, got {self.shuffle_window}")
+        if self.length_multiple < 0:
+            raise BatchingError(
+                f"length_multiple must be >= 0, got {self.length_multiple}"
+            )
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -107,9 +123,17 @@ class BatchingPolicy:
             "max_pairs": self.max_pairs,
             "shuffle_window": self.shuffle_window,
             "seed": self.seed,
+            "length_multiple": self.length_multiple,
             "max_protein_length": self.max_protein_length,
             "drop_last": self.drop_last,
         }
+
+
+def _round_up(length: int, multiple: int) -> int:
+    """Round a padded length up to a multiple, to bound shape diversity."""
+    if multiple <= 1:
+        return int(length)
+    return int(-(-int(length) // multiple) * multiple)
 
 
 def length_bucketed_batches(
@@ -146,7 +170,7 @@ def length_bucketed_batches(
         current: list[int] = []
         longest = 0
         for index in window:
-            candidate = max(longest, lengths[index])
+            candidate = _round_up(max(longest, lengths[index]), policy.length_multiple)
             fits = (
                 len(current) + 1 <= policy.max_pairs
                 and candidate * (len(current) + 1) <= policy.residue_budget
@@ -222,8 +246,13 @@ class PairDataset:
         *,
         protein_cache: ProteinFeatureCache,
         limit: int | None = None,
+        length_multiple: int = 128,
     ) -> None:
         import pandas as pd
+
+        #: Must match the policy the loader uses, or the budget check and the
+        #: actual padding disagree.
+        self.length_multiple = length_multiple
 
         from bindra.data.splits import read_split
         from bindra.data.tables import ShardedTableRef
@@ -348,7 +377,9 @@ class PairDataset:
         features = [
             self.protein_cache.get(self.cache_key(i)).residue_features for i in indices
         ]
-        width = max(int(f.shape[0]) for f in features)
+        width = _round_up(
+            max(int(f.shape[0]) for f in features), self.length_multiple
+        )
         dim = int(features[0].shape[1])
         # Padded in the cache's own bf16, not upcast here. Converting on the CPU
         # cost 48 ms a batch and doubled the host-to-device transfer, since a
@@ -387,6 +418,8 @@ class PairLoader:
     ) -> None:
         self.dataset = dataset
         self.policy = policy or BatchingPolicy()
+        # The dataset pads and the policy budgets; they must round identically.
+        self.dataset.length_multiple = self.policy.length_multiple
         self.shuffle = shuffle
         #: Processes featurizing ligands. Separate from ``prefetch_workers``
         #: because the two solve different problems: threads overlap the protein
