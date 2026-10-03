@@ -606,3 +606,76 @@ class TestGradientAccumulation:
         trainer = Trainer(_model(), TrainingConfig(epochs=1, log_every=0, patience=0))
         trainer.fit(_FakeLoader([_batch(seed=i) for i in range(5)]))
         assert trainer.global_step == 5
+
+
+class TestCheckpointWriteResilience:
+    """A locked rename must not end the run.
+
+    The second real training run died this way: `last.pt` written at 14:03:15,
+    a complete `last.pt.tmp` at 14:04:20, and an unhandled PermissionError an
+    hour and a half into epoch 1. The project tree is under OneDrive, which
+    opens each new 87 MB checkpoint to upload it, and `Path.replace` then fails
+    with "the process cannot access the file".
+    """
+
+    def test_a_locked_rename_does_not_raise(self, tmp_path, monkeypatch, capsys):
+        trainer = Trainer(
+            _model(), TrainingConfig(epochs=1, log_every=0, patience=0),
+            run_directory=tmp_path,
+        )
+        from pathlib import Path
+
+        def always_locked(self, target):
+            raise PermissionError("used by another process")
+
+        monkeypatch.setattr(Path, "replace", always_locked)
+        monkeypatch.setattr("bindra.training.engine.time.sleep", lambda _s: None)
+        assert trainer.save_checkpoint("last.pt", attempts=3) is None
+        assert "locked by another process" in capsys.readouterr().out
+
+    def test_training_continues_through_a_locked_checkpoint(self, tmp_path, monkeypatch):
+        """The property that matters: hours of training outlive one failed save."""
+        from pathlib import Path
+
+        monkeypatch.setattr(
+            Path, "replace",
+            lambda self, target: (_ for _ in ()).throw(PermissionError("locked")),
+        )
+        monkeypatch.setattr("bindra.training.engine.time.sleep", lambda _s: None)
+        trainer = Trainer(
+            _model(),
+            TrainingConfig(epochs=1, log_every=0, patience=0,
+                           checkpoint_every_batches=1),
+            run_directory=tmp_path,
+        )
+        history = trainer.fit(_FakeLoader([_batch(seed=i) for i in range(4)]))
+        assert history, "the epoch must still complete"
+
+    def test_a_transient_lock_is_retried_and_succeeds(self, tmp_path, monkeypatch):
+        from pathlib import Path
+
+        real = Path.replace
+        calls = {"n": 0}
+
+        def flaky(self, target):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise PermissionError("locked")
+            return real(self, target)
+
+        monkeypatch.setattr(Path, "replace", flaky)
+        monkeypatch.setattr("bindra.training.engine.time.sleep", lambda _s: None)
+        trainer = Trainer(
+            _model(), TrainingConfig(epochs=1, log_every=0, patience=0),
+            run_directory=tmp_path,
+        )
+        assert trainer.save_checkpoint("last.pt") == tmp_path / "last.pt"
+        assert calls["n"] == 3
+
+    def test_a_stale_tmp_from_a_crash_is_reported(self, tmp_path, capsys):
+        (tmp_path / "last.pt.tmp").write_bytes(b"x")
+        Trainer(
+            _model(), TrainingConfig(epochs=1, log_every=0, patience=0),
+            run_directory=tmp_path,
+        )
+        assert "interrupted write" in capsys.readouterr().out

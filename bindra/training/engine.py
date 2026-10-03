@@ -468,6 +468,13 @@ class Trainer:
         self.run_directory = Path(run_directory) if run_directory else None
         if self.run_directory:
             self.run_directory.mkdir(parents=True, exist_ok=True)
+            for stale in self.run_directory.glob("*.pt.tmp"):
+                print(
+                    f"  [ckpt] found {stale.name} from an interrupted write. It is a "
+                    f"complete checkpoint whose rename failed; rename it by hand if it "
+                    f"is newer than {stale.name[:-4]}.",
+                    flush=True,
+                )
         #: Hashes identifying the corpus, splits and encoders, written into every
         #: checkpoint so a result can be traced back to what produced it.
         self.provenance = dict(provenance or {})
@@ -824,19 +831,46 @@ class Trainer:
             "numpy_rng": np.random.get_state(),
         }
 
-    def save_checkpoint(self, name: str = "last.pt") -> Path | None:
-        """Write atomically: a temp file and a rename.
+    def save_checkpoint(self, name: str = "last.pt", *, attempts: int = 6) -> Path | None:
+        """Write to a temp file, then rename. Retries, and never kills the run.
 
-        An epoch is ~97 minutes, so an interruption during a write must not cost
-        the previous checkpoint as well as the current one.
+        The rename is the fragile part on Windows. A cloud-sync client -- the
+        project's own tree lives under OneDrive -- notices an 87 MB file appear
+        and opens it to upload, and ``replace`` then fails with "the process
+        cannot access the file because it is being used by another process".
+        That is exactly how the second real run died: ``last.pt`` written at
+        14:03:15, a complete ``last.pt.tmp`` at 14:04:20, and an unhandled
+        PermissionError that ended the run an hour and a half into epoch 1.
+
+        The lock is transient, so the rename is retried with backoff. If it
+        still fails, the run **continues** and says so: losing a checkpoint
+        costs minutes, while raising here costs hours of training. Keeping the
+        run alive is worth more than any single save.
         """
         if self.run_directory is None:
             return None
         path = self.run_directory / name
         temporary = path.with_suffix(path.suffix + ".tmp")
-        torch.save(self.state_dict(), temporary)
-        temporary.replace(path)
-        return path
+        try:
+            torch.save(self.state_dict(), temporary)
+        except OSError as exc:
+            print(f"  [ckpt] could not write {temporary.name}: {exc}", flush=True)
+            return None
+
+        for attempt in range(attempts):
+            try:
+                temporary.replace(path)
+                return path
+            except PermissionError:
+                if attempt == attempts - 1:
+                    break
+                time.sleep(0.5 * 2**attempt)
+        print(
+            f"  [ckpt] {path.name} is locked by another process (cloud sync?); "
+            f"kept {temporary.name} and continued. The previous checkpoint is intact.",
+            flush=True,
+        )
+        return None
 
     def load_checkpoint(self, path: Path | str, *, strict: bool = True) -> None:
         """Resume a run, including its RNG stream."""
@@ -872,20 +906,33 @@ class Trainer:
             return
         path = self.run_directory / "history.json"
         temporary = path.with_suffix(".json.tmp")
-        temporary.write_text(
-            json.dumps(
-                {
-                    "config": self.config.to_dict(),
-                    "provenance": self.provenance,
-                    "noise_floor": noise_floor_table(),
-                    "epochs": self.history,
-                },
-                indent=2,
-                default=str,
-            ),
-            encoding="utf-8",
-        )
-        temporary.replace(path)
+        try:
+            temporary.write_text(
+                json.dumps(
+                    {
+                        "config": self.config.to_dict(),
+                        "provenance": self.provenance,
+                        "noise_floor": noise_floor_table(),
+                        "epochs": self.history,
+                    },
+                    indent=2,
+                    default=str,
+                ),
+                encoding="utf-8",
+            )
+            # Same cloud-sync lock as the checkpoint rename, and the same
+            # judgement: a run log is not worth ending a run over. The history
+            # also lives in the checkpoints, so nothing is lost permanently.
+            for attempt in range(4):
+                try:
+                    temporary.replace(path)
+                    return
+                except PermissionError:
+                    if attempt == 3:
+                        raise
+                    time.sleep(0.5 * 2**attempt)
+        except OSError as exc:
+            print(f"  [hist] could not update history.json ({exc}); continuing", flush=True)
 
 
 __all__ = [
