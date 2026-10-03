@@ -314,6 +314,45 @@ channels are binary and the three continuous ones are functions of the element.
 Not built, because the format is a real design choice and the GPU is now the
 bottleneck anyway.
 
+## First real training run, and two optimisation hypotheses that failed
+
+`bindra train --regime random_pair` reaches **1,917,944 pairs in 22,044 batches,
+1.9% padding**, and learns: over the first 5,601 steps loss fell 9.80 -> 2.06 and
+exact RMSE 6.50 -> 2.08, with all three endpoint heads improving together
+(Kd 2.86x, Ki 3.66x, IC50 2.88x of their measured noise floors). The run was
+stopped by request at 25% of epoch 0.
+
+Sustained throughput is **~150-200 pairs/s, so an epoch is 2.7-3.5 hours**, not
+the ~1.6 h a warm-slice benchmark suggested. Two attempts to close that gap did
+not work, and both are recorded because the negative result is the useful part:
+
+- **Moving the 15 GiB protein cache off OneDrive to local disk did not help.**
+  Measured 149 pairs/s from `C:/bindra/cache/proteins` against 196 from the
+  OneDrive path. The I/O hypothesis is not supported; the earlier 328 pairs/s
+  came from a small `val` slice with a different batch composition, not from a
+  warmer cache.
+- **Raising the residue budget OOMs on real batches.** 65,536 peaks at 6.66 GiB,
+  but 131,072 exhausts 15.9 GiB. A synthetic sweep had suggested 5.44 GiB at
+  that budget; real molecules carry far more atoms than the repeated aspirin it
+  used, and the ligand side scales with batch size. 65,536 stands.
+
+So the remaining headroom is **not** in the configuration. The profile still
+says ligand featurization is 72% of the CPU batch build, and it is a
+deterministic function of the SMILES, so a graph cache is the next real lever.
+
+**Mid-epoch checkpointing was added in response to this run.** It had written
+nothing when stopped 42 minutes in, because `save_checkpoint` only ran at epoch
+boundaries -- a cadence sized against a projected 97-minute epoch rather than
+the measured one. `checkpoint_every_steps` defaults to 500, and a mid-epoch
+checkpoint resumes *inside* its epoch, skipping the batches already seen rather
+than replaying and double-weighting them.
+
+**Learning rate, batch size and model size are untuned.** 3e-4 with cosine decay
+and 5% warmup is a plausible default, not a validated choice, and no sweep has
+been run. The model is 5,728,771 parameters, which is small for the card; making
+it larger is a capacity decision that would cost throughput, and it should be
+made against a baseline rather than before one exists.
+
 ## Decisions still pending
 
 - **Both encoders fine-tune their last layer.** Defaults are

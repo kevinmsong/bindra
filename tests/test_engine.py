@@ -442,3 +442,80 @@ class TestEMAWarmup:
         fresh.load_state_dict(state)
         assert fresh.steps == 40
         assert fresh.effective_decay() == pytest.approx(ema.effective_decay())
+
+
+class TestMidEpochCheckpoints:
+    """An epoch here is hours; a boundary-only checkpoint loses all of it.
+
+    The first real run was stopped 42 minutes into a 2h45m epoch and had written
+    nothing, because `save_checkpoint` only ran at epoch boundaries.
+    """
+
+    def test_checkpoints_are_written_during_an_epoch(self, tmp_path):
+        batches = [_batch(seed=i) for i in range(6)]
+        trainer = Trainer(
+            _model(),
+            TrainingConfig(epochs=1, log_every=0, patience=0,
+                           checkpoint_every_steps=2),
+            run_directory=tmp_path,
+        )
+        trainer.fit(_FakeLoader(batches))
+        assert (tmp_path / "last.pt").exists()
+
+    def test_a_mid_epoch_checkpoint_resumes_inside_that_epoch(self, tmp_path):
+        """Not at the next one: replaying the first half would double-weight it."""
+        trainer = Trainer(
+            _model(),
+            TrainingConfig(epochs=4, log_every=0, patience=0, checkpoint_every_steps=2),
+            run_directory=tmp_path,
+        )
+        trainer.epoch = 1
+        trainer.global_step = 2
+        trainer.batch_in_epoch = 3
+        trainer.save_checkpoint("mid.pt")
+
+        fresh = Trainer(
+            _model(),
+            TrainingConfig(epochs=4, log_every=0, patience=0, checkpoint_every_steps=2),
+            run_directory=tmp_path,
+        )
+        fresh.load_checkpoint(tmp_path / "mid.pt")
+        assert fresh.epoch == 1, "a mid-epoch checkpoint must not skip to the next epoch"
+        assert fresh.batch_in_epoch == 3
+
+    def test_an_epoch_boundary_checkpoint_still_advances(self, tmp_path):
+        trainer = Trainer(
+            _model(), TrainingConfig(epochs=4, log_every=0, patience=0),
+            run_directory=tmp_path,
+        )
+        trainer.epoch = 1
+        trainer.batch_in_epoch = 0
+        trainer.save_checkpoint("boundary.pt")
+
+        fresh = Trainer(
+            _model(), TrainingConfig(epochs=4, log_every=0, patience=0),
+            run_directory=tmp_path,
+        )
+        fresh.load_checkpoint(tmp_path / "boundary.pt")
+        assert fresh.epoch == 2
+
+    def test_resuming_skips_the_batches_already_seen(self, tmp_path):
+        """Otherwise the resumed epoch trains on its first half twice."""
+        batches = [_batch(size=2, seed=i) for i in range(8)]
+        trainer = Trainer(
+            _model(), TrainingConfig(epochs=1, log_every=0, patience=0,
+                                     checkpoint_every_steps=0),
+            run_directory=tmp_path,
+        )
+        trainer.batch_in_epoch = 5
+        report = trainer._train_epoch(_FakeLoader(batches))
+        assert report.n_pairs == 3 * 2, "only the unseen batches should be trained on"
+
+    def test_the_counter_resets_at_the_end_of_an_epoch(self, tmp_path):
+        trainer = Trainer(
+            _model(), TrainingConfig(epochs=1, log_every=0, patience=0),
+            run_directory=tmp_path,
+        )
+        trainer.batch_in_epoch = 2
+        trainer._train_epoch(_FakeLoader([_batch() for _ in range(4)]))
+        assert trainer.batch_in_epoch == 0

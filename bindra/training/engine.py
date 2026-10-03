@@ -105,6 +105,10 @@ class TrainingConfig:
     selection_mode: str = "min"
     seed: int = 20261001
     log_every: int = 50
+    #: Write ``last.pt`` every N optimizer steps, not only at epoch boundaries.
+    #: An epoch here is hours: the first real run was interrupted 42 minutes in
+    #: and lost all of it, because nothing had been written yet. 0 disables.
+    checkpoint_every_steps: int = 500
     loss: AffinityLossConfig = field(default_factory=AffinityLossConfig)
 
     def __post_init__(self) -> None:
@@ -123,6 +127,7 @@ class TrainingConfig:
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
+            "checkpoint_every_steps": self.checkpoint_every_steps,
             "learning_rate": self.learning_rate,
             "weight_decay": self.weight_decay,
             "epochs": self.epochs,
@@ -447,6 +452,8 @@ class Trainer:
         )
         self.epoch = 0
         self.global_step = 0
+        #: Batches already consumed in the current epoch, for a mid-epoch resume.
+        self.batch_in_epoch = 0
         self.best_metric: float | None = None
         self.history: list[dict[str, Any]] = []
 
@@ -511,7 +518,16 @@ class Trainer:
         n_batches = len(loader)
         if self.device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(self.device)
+        skip = self.batch_in_epoch
+        if skip:
+            print(
+                f"  resuming epoch {self.epoch} after batch {skip:,} "
+                f"of {n_batches:,}",
+                flush=True,
+            )
         for index, batch in enumerate(loader):
+            if index < skip:
+                continue
             batch = batch.to(self.device)
             self.optimizer.zero_grad(set_to_none=True)
             with torch.autocast(
@@ -541,6 +557,16 @@ class Trainer:
                 index % self.config.log_every == 0 or index == n_batches - 1
             ):
                 self._log_step(index, n_batches, metrics, started)
+            if (
+                self.config.checkpoint_every_steps
+                and self.global_step % self.config.checkpoint_every_steps == 0
+            ):
+                # Mid-epoch, so an interruption costs minutes rather than hours.
+                # `batch_in_epoch` lets a resume skip what it already saw instead
+                # of silently replaying it, which would weight those pairs twice.
+                self.batch_in_epoch = index + 1
+                self.save_checkpoint("last.pt")
+        self.batch_in_epoch = 0
         return metrics.report(self.epoch, "train", time.perf_counter() - started)
 
     def _log_step(
@@ -666,6 +692,7 @@ class Trainer:
             "ema": None if self.ema is None else self.ema.state_dict(),
             "epoch": self.epoch,
             "global_step": self.global_step,
+            "batch_in_epoch": self.batch_in_epoch,
             "best_metric": self.best_metric,
             "history": self.history,
             "config": self.config.to_dict(),
@@ -706,7 +733,10 @@ class Trainer:
             self.scheduler.load_state_dict(payload["scheduler"])
         if payload.get("ema") is not None and self.ema is not None:
             self.ema.load_state_dict(payload["ema"])
-        self.epoch = int(payload["epoch"]) + 1
+        # A checkpoint written mid-epoch resumes *inside* that epoch; one
+        # written at an epoch boundary (batch_in_epoch == 0) moves to the next.
+        self.batch_in_epoch = int(payload.get("batch_in_epoch", 0))
+        self.epoch = int(payload["epoch"]) + (0 if self.batch_in_epoch else 1)
         self.global_step = int(payload["global_step"])
         self.best_metric = payload.get("best_metric")
         self.history = list(payload.get("history", []))
