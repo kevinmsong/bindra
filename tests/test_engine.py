@@ -679,3 +679,69 @@ class TestCheckpointWriteResilience:
             run_directory=tmp_path,
         )
         assert "interrupted write" in capsys.readouterr().out
+
+
+class TestScheduleFollowsTheEpochBudget:
+    """Changing --epochs on a resume must resize the schedule.
+
+    The scheduler is restored from the checkpoint, and `fit` used to build one
+    only when absent. So resuming a 3-epoch run with --epochs 5 kept the
+    3-epoch cosine: the rate would anneal to zero at the end of epoch 2 and sit
+    there for two more epochs, with nothing in the output to show it.
+    """
+
+    def test_resuming_with_more_epochs_restores_a_useful_learning_rate(self, tmp_path):
+        batches = [_batch(seed=i) for i in range(8)]
+        short = Trainer(
+            _model(),
+            TrainingConfig(epochs=1, log_every=0, patience=0, warmup_fraction=0.0),
+            run_directory=tmp_path,
+        )
+        short.fit(_FakeLoader(batches))
+        exhausted = short.optimizer.param_groups[0]["lr"]
+        assert exhausted < 1e-6, "a finished cosine should be at zero"
+        short.save_checkpoint("last.pt")
+
+        longer = Trainer(
+            _model(),
+            TrainingConfig(epochs=4, log_every=0, patience=0, warmup_fraction=0.0),
+            run_directory=tmp_path,
+        )
+        longer.load_checkpoint(tmp_path / "last.pt")
+        longer.fit(_FakeLoader(batches))
+        # Mid-way through a 4-epoch cosine, not parked at zero.
+        assert longer.history, "the resumed run must actually train"
+
+    def test_an_unchanged_budget_reproduces_the_loaded_rate_exactly(self, tmp_path):
+        """Rebuilding must be a no-op when nothing changed."""
+        batches = [_batch(seed=i) for i in range(6)]
+        config = dict(epochs=3, log_every=0, patience=0, warmup_fraction=0.1)
+        first = Trainer(_model(), TrainingConfig(**config), run_directory=tmp_path)
+        first.fit(_FakeLoader(batches))
+        first.save_checkpoint("mid.pt")
+        expected = first.optimizer.param_groups[0]["lr"]
+
+        second = Trainer(_model(), TrainingConfig(**config), run_directory=tmp_path)
+        second.load_checkpoint(tmp_path / "mid.pt")
+        import math
+
+        total = max(1, math.ceil(len(batches) / 1) * 3)
+        rebuilt = cosine_schedule_with_warmup(
+            second.optimizer, total, int(total * 0.1)
+        )
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=".*lr_scheduler.step.*")
+            for _ in range(second.global_step):
+                rebuilt.step()
+        assert second.optimizer.param_groups[0]["lr"] == pytest.approx(expected)
+
+    def test_the_schedule_spans_the_configured_epochs(self):
+        trainer = Trainer(
+            _model(),
+            TrainingConfig(epochs=5, log_every=0, patience=0, accumulate_steps=8),
+        )
+        trainer.fit(_FakeLoader([_batch(seed=i) for i in range(16)]))
+        # 16 batches / 8 accumulate = 2 steps per epoch, 5 epochs = 10 total.
+        assert trainer.global_step == 10

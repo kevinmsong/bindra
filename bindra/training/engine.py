@@ -47,6 +47,7 @@ import json
 import math
 from pathlib import Path
 import time
+import warnings
 from typing import Any, Callable, Iterable, Mapping
 
 import numpy as np
@@ -515,12 +516,38 @@ class Trainer:
             math.ceil(len(train_loader) / self.config.accumulate_steps)
             * self.config.epochs,
         )
-        if self.scheduler is None:
-            self.scheduler = cosine_schedule_with_warmup(
-                self.optimizer,
-                total_steps,
-                int(total_steps * self.config.warmup_fraction),
+        # Rebuilt every time, then fast-forwarded to where the run actually is,
+        # rather than built only when absent.
+        #
+        # A resumed run restores the scheduler from its checkpoint, so a
+        # schedule sized for the *old* epoch count would survive a change to
+        # --epochs: ask for 5 after training 3 and the rate would anneal to zero
+        # at the end of epoch 2 and stay there, with nothing to show it. Since
+        # the cosine depends only on (step, total_steps), reconstructing and
+        # replaying is exact -- resuming with an unchanged budget reproduces the
+        # loaded state precisely, so this costs nothing when nothing changed.
+        rebuilt = cosine_schedule_with_warmup(
+            self.optimizer,
+            total_steps,
+            int(total_steps * self.config.warmup_fraction),
+        )
+        # Replaying the schedule without a matching optimizer.step() trips
+        # torch's "called step() before optimizer.step()" warning. Here that is
+        # exactly the intent -- the schedule is being fast-forwarded, not used
+        # to train -- so the warning is noise on every resumed run.
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=".*lr_scheduler.step.*")
+            for _ in range(self.global_step):
+                rebuilt.step()
+        if self.scheduler is not None and self.global_step:
+            previous = self.optimizer.param_groups[0]["lr"]
+            print(
+                f"  schedule spans {total_steps:,} optimizer steps for "
+                f"{self.config.epochs} epochs; resuming at step "
+                f"{self.global_step:,} with lr {previous:.2e}",
+                flush=True,
             )
+        self.scheduler = rebuilt
 
         stale = 0
         start_epoch = self.epoch
