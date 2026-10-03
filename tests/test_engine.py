@@ -75,6 +75,9 @@ class _FakeLoader:
         self._batches = list(batches)
         self.dataset = _FakeDataset(partition)
         self.epoch = 0
+        #: Honoured like the real loader: a resumed epoch starts here rather
+        #: than building and discarding what it already saw.
+        self.start_at = 0
 
     def set_epoch(self, epoch: int) -> None:
         self.epoch = epoch
@@ -83,7 +86,7 @@ class _FakeLoader:
         return len(self._batches)
 
     def __iter__(self):
-        return iter(self._batches)
+        return iter(self._batches[self.start_at :])
 
 
 def _model():
@@ -507,9 +510,11 @@ class TestMidEpochCheckpoints:
                                      checkpoint_every_batches=0),
             run_directory=tmp_path,
         )
+        loader = _FakeLoader(batches)
         trainer.batch_in_epoch = 5
-        report = trainer._train_epoch(_FakeLoader(batches))
+        report = trainer._train_epoch(loader)
         assert report.n_pairs == 3 * 2, "only the unseen batches should be trained on"
+        assert loader.start_at == 0, "the next epoch must start from the beginning"
 
     def test_the_counter_resets_at_the_end_of_an_epoch(self, tmp_path):
         trainer = Trainer(
@@ -745,3 +750,50 @@ class TestScheduleFollowsTheEpochBudget:
         trainer.fit(_FakeLoader([_batch(seed=i) for i in range(16)]))
         # 16 batches / 8 accumulate = 2 steps per epoch, 5 epochs = 10 total.
         assert trainer.global_step == 10
+
+
+class TestResumeDoesNotRebuildSkippedBatches:
+    """Skipping must not mean building and discarding.
+
+    The resume path filtered inside the loop -- `for index, batch in
+    enumerate(loader): if index < skip: continue` -- which asks the loader for
+    every skipped batch and throws it away. At the real cadence that is about
+    three hours of assembly for 25,504 batches, and silent, because the
+    progress line sits after the filter.
+    """
+
+    def test_skipped_batches_are_never_built(self):
+        built: list[int] = []
+
+        class CountingLoader(_FakeLoader):
+            def __iter__(self):
+                for position, batch in enumerate(self._batches[self.start_at :]):
+                    built.append(position + self.start_at)
+                    yield batch
+
+        trainer = Trainer(
+            _model(), TrainingConfig(epochs=1, log_every=0, patience=0)
+        )
+        loader = CountingLoader([_batch(size=2, seed=i) for i in range(10)])
+        trainer.batch_in_epoch = 7
+        trainer._train_epoch(loader)
+        assert built == [7, 8, 9], f"built {built}, should have skipped 0-6 entirely"
+
+    def test_the_offset_is_cleared_for_the_following_epoch(self):
+        trainer = Trainer(
+            _model(), TrainingConfig(epochs=1, log_every=0, patience=0)
+        )
+        loader = _FakeLoader([_batch(seed=i) for i in range(6)])
+        trainer.batch_in_epoch = 4
+        trainer._train_epoch(loader)
+        assert loader.start_at == 0
+
+    def test_the_resume_line_reports_what_remains(self, capsys):
+        trainer = Trainer(
+            _model(), TrainingConfig(epochs=1, log_every=0, patience=0)
+        )
+        trainer.batch_in_epoch = 6
+        trainer._train_epoch(_FakeLoader([_batch(seed=i) for i in range(10)]))
+        out = capsys.readouterr().out
+        assert "resuming epoch 0 at batch 6 of 10" in out
+        assert "4 batches remain" in out

@@ -598,15 +598,20 @@ class Trainer:
         accumulate = self.config.accumulate_steps
         last_tick = time.perf_counter()
         skip = self.batch_in_epoch
+        # Told to the loader rather than filtered here. Iterating and dropping
+        # the first `skip` batches would *build* every one of them first --
+        # 25,504 batches is about three hours of assembling work to throw away,
+        # and silently, since the progress line sits after the filter.
+        loader.start_at = skip
         if skip:
             print(
-                f"  resuming epoch {self.epoch} after batch {skip:,} "
-                f"of {n_batches:,}",
+                f"  resuming epoch {self.epoch} at batch {skip:,} of "
+                f"{n_batches:,} ({100 * skip / max(1, n_batches):.1f}% done); "
+                f"{n_batches - skip:,} batches remain this epoch",
                 flush=True,
             )
-        for index, batch in enumerate(loader):
-            if index < skip:
-                continue
+        for offset, batch in enumerate(loader):
+            index = offset + skip
             # Everything between the end of the last step and here was spent
             # waiting on the loader. The split between this and compute is the
             # whole question when throughput disappoints.
@@ -686,6 +691,7 @@ class Trainer:
                 self.save_checkpoint("last.pt")
             last_tick = time.perf_counter()
         self.batch_in_epoch = 0
+        loader.start_at = 0
         if skipped:
             print(
                 f"  [oom] {skipped} batch(es), {skipped_pairs:,} pairs, were "

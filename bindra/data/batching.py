@@ -425,6 +425,10 @@ class PairLoader:
         #: because the two solve different problems: threads overlap the protein
         #: reads and the GPU, processes get past the GIL. 0 keeps it in-process.
         self.featurize_workers = featurize_workers
+        #: First batch to actually build. A resumed epoch sets this so the
+        #: batches already consumed are **skipped, not built and discarded** --
+        #: assembling 25,504 of them to throw away costs about three hours.
+        self.start_at = 0
         self._pool = None
         #: Threads building batches ahead of the consumer. 0 disables, which is
         #: what the tests use so failures surface in the calling thread.
@@ -460,13 +464,14 @@ class PairLoader:
 
     def __iter__(self) -> Iterator[PairBatch]:
         executor = self._executor()
+        pending_batches = self.batches()[self.start_at :]
         if self.prefetch_workers <= 0:
-            for indices in self.batches():
+            for indices in pending_batches:
                 yield self.dataset.build_batch(indices, executor)
             return
-        yield from self._prefetched(executor)
+        yield from self._prefetched(executor, pending_batches)
 
-    def _prefetched(self, executor=None) -> Iterator[PairBatch]:
+    def _prefetched(self, executor=None, batches=None) -> Iterator[PairBatch]:
         """Build batches on worker threads, a few ahead of the consumer.
 
         Threads, not processes, because a batch's padded protein tensor is
@@ -490,7 +495,7 @@ class PairLoader:
         from concurrent.futures import ThreadPoolExecutor
         from collections import deque
 
-        indices = self.batches()
+        indices = self.batches() if batches is None else batches
         depth = max(2, self.prefetch_workers * 2)
         with ThreadPoolExecutor(max_workers=self.prefetch_workers) as pool:
             pending: deque = deque()
