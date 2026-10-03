@@ -317,20 +317,33 @@ class PairDataset:
         """What the joins dropped, so a silent shrink is visible."""
         return {"requested": requested, "retained": len(self.frame)}
 
-    def build_batch(self, indices: Sequence[int]) -> PairBatch:
-        """Assemble one batch. Raises rather than skipping a bad record."""
+    def build_batch(self, indices: Sequence[int], executor=None) -> PairBatch:
+        """Assemble one batch. Raises rather than skipping a bad record.
+
+        ``executor`` is a process pool used **only** for ligand featurization,
+        which is 72% of this function and is GIL-bound Python inside RDKit's
+        wrappers -- threads measured at 1.1x over serial, so the machine's eight
+        cores went unused. Only the SMILES go out and small graph arrays come
+        back (~1 MiB a batch); the protein tensor, which is ~144 MiB, never
+        crosses a process boundary.
+        """
         if not indices:
             raise BatchingError("cannot build an empty batch")
         rows = self.frame.iloc[list(indices)]
+        smiles = list(rows["standardized_smiles"])
 
-        graphs: list[MolecularGraph] = []
-        for smiles in rows["standardized_smiles"]:
-            try:
-                graphs.append(featurize_molecule(smiles))
-            except LigandGraphError as exc:
-                raise BatchingError(
-                    f"{smiles!r} is in the curated corpus but will not featurize: {exc}"
-                ) from exc
+        try:
+            if executor is not None and len(smiles) > 8:
+                chunk = max(1, len(smiles) // (4 * (executor._max_workers or 1)))
+                graphs: list[MolecularGraph] = list(
+                    executor.map(featurize_molecule, smiles, chunksize=chunk)
+                )
+            else:
+                graphs = [featurize_molecule(s) for s in smiles]
+        except LigandGraphError as exc:
+            raise BatchingError(
+                f"a curated molecule will not featurize: {exc}"
+            ) from exc
 
         features = [
             self.protein_cache.get(self.cache_key(i)).residue_features for i in indices
@@ -370,10 +383,16 @@ class PairLoader:
         *,
         shuffle: bool = True,
         prefetch_workers: int = 3,
+        featurize_workers: int = 0,
     ) -> None:
         self.dataset = dataset
         self.policy = policy or BatchingPolicy()
         self.shuffle = shuffle
+        #: Processes featurizing ligands. Separate from ``prefetch_workers``
+        #: because the two solve different problems: threads overlap the protein
+        #: reads and the GPU, processes get past the GIL. 0 keeps it in-process.
+        self.featurize_workers = featurize_workers
+        self._pool = None
         #: Threads building batches ahead of the consumer. 0 disables, which is
         #: what the tests use so failures surface in the calling thread.
         self.prefetch_workers = prefetch_workers
@@ -391,14 +410,30 @@ class PairLoader:
     def __len__(self) -> int:
         return len(self.batches())
 
+    def _executor(self):
+        """Lazily start the featurization pool; reused across epochs."""
+        if self.featurize_workers <= 0:
+            return None
+        if self._pool is None:
+            from concurrent.futures import ProcessPoolExecutor
+
+            self._pool = ProcessPoolExecutor(max_workers=self.featurize_workers)
+        return self._pool
+
+    def close(self) -> None:
+        if self._pool is not None:
+            self._pool.shutdown(wait=False)
+            self._pool = None
+
     def __iter__(self) -> Iterator[PairBatch]:
+        executor = self._executor()
         if self.prefetch_workers <= 0:
             for indices in self.batches():
-                yield self.dataset.build_batch(indices)
+                yield self.dataset.build_batch(indices, executor)
             return
-        yield from self._prefetched()
+        yield from self._prefetched(executor)
 
-    def _prefetched(self) -> Iterator[PairBatch]:
+    def _prefetched(self, executor=None) -> Iterator[PairBatch]:
         """Build batches on worker threads, a few ahead of the consumer.
 
         Threads, not processes, because a batch's padded protein tensor is
@@ -428,12 +463,16 @@ class PairLoader:
             pending: deque = deque()
             upcoming = iter(indices)
             for batch_indices in upcoming:
-                pending.append(pool.submit(self.dataset.build_batch, batch_indices))
+                pending.append(
+                    pool.submit(self.dataset.build_batch, batch_indices, executor)
+                )
                 if len(pending) >= depth:
                     break
             for batch_indices in upcoming:
                 yield pending.popleft().result()
-                pending.append(pool.submit(self.dataset.build_batch, batch_indices))
+                pending.append(
+                    pool.submit(self.dataset.build_batch, batch_indices, executor)
+                )
             while pending:
                 yield pending.popleft().result()
 

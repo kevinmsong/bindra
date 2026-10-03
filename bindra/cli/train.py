@@ -115,9 +115,11 @@ def cmd_fit(args) -> int:
     policy = BatchingPolicy(
         residue_budget=args.residue_budget, max_pairs=args.max_pairs, seed=args.seed
     )
-    train_loader = PairLoader(train, policy, prefetch_workers=args.workers)
+    train_loader = PairLoader(train, policy, prefetch_workers=args.workers,
+                              featurize_workers=args.featurize_workers)
     val_loader = PairLoader(
-        validation, policy, shuffle=False, prefetch_workers=args.workers
+        validation, policy, shuffle=False, prefetch_workers=args.workers,
+        featurize_workers=args.featurize_workers,
     )
     print(
         f"[{OK}] train {len(train):,} pairs in {len(train_loader):,} batches | "
@@ -152,9 +154,12 @@ def cmd_fit(args) -> int:
         weight_decay=args.weight_decay,
         epochs=args.epochs,
         patience=args.patience,
+        accumulate_steps=args.accumulate,
         ema_decay=args.ema,
         seed=args.seed,
-        log_every=args.log_every,
+        # --verbose means every step unless a cadence was asked for explicitly.
+        log_every=1 if args.verbose and args.log_every == 100 else args.log_every,
+        verbose=args.verbose,
     )
     trainer = Trainer(
         model,
@@ -200,7 +205,7 @@ def build_parser():
     parser.add_argument("--device", default=None, help="Defaults to the largest CUDA device.")
     parser.add_argument("--limit", type=int, default=None, help="Cap pairs, for smoke runs.")
     parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--lr", type=float, default=3e-4)
+    parser.add_argument("--lr", type=float, default=5e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-2)
     parser.add_argument("--patience", type=int, default=3)
     parser.add_argument("--ema", type=float, default=0.999)
@@ -209,11 +214,25 @@ def build_parser():
     parser.add_argument("--ligand-dim", type=int, default=256)
     parser.add_argument("--ligand-layers", type=int, default=4)
     parser.add_argument("--fusion-layers", type=int, default=2)
+    parser.add_argument(
+        "--accumulate", type=int, default=1,
+        help="Micro-batches per optimizer step. Raises the effective batch at "
+             "no memory cost; mean micro-batch is ~87 pairs.",
+    )
     parser.add_argument("--residue-budget", type=int, default=65_536)
     parser.add_argument("--max-pairs", type=int, default=256)
-    parser.add_argument("--workers", type=int, default=3)
+    parser.add_argument("--workers", type=int, default=3,
+                        help="Threads overlapping batch assembly with the GPU.")
+    parser.add_argument("--featurize-workers", type=int, default=8,
+                        help="Processes featurizing ligands. RDKit is GIL-bound, "
+                             "so threads cannot use the extra cores; 0 disables.")
     parser.add_argument("--seed", type=int, default=20261001)
     parser.add_argument("--log-every", type=int, default=100)
+    parser.add_argument(
+        "-v", "--verbose", action="store_true",
+        help="Per-step detail: loss terms, gradient norm, batch shape, data wait. "
+             "Implies --log-every 1 unless you set it explicitly.",
+    )
     parser.add_argument("--resume", default=None)
     return parser
 

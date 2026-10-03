@@ -456,7 +456,7 @@ class TestMidEpochCheckpoints:
         trainer = Trainer(
             _model(),
             TrainingConfig(epochs=1, log_every=0, patience=0,
-                           checkpoint_every_steps=2),
+                           checkpoint_every_batches=2),
             run_directory=tmp_path,
         )
         trainer.fit(_FakeLoader(batches))
@@ -466,7 +466,7 @@ class TestMidEpochCheckpoints:
         """Not at the next one: replaying the first half would double-weight it."""
         trainer = Trainer(
             _model(),
-            TrainingConfig(epochs=4, log_every=0, patience=0, checkpoint_every_steps=2),
+            TrainingConfig(epochs=4, log_every=0, patience=0, checkpoint_every_batches=2),
             run_directory=tmp_path,
         )
         trainer.epoch = 1
@@ -476,7 +476,7 @@ class TestMidEpochCheckpoints:
 
         fresh = Trainer(
             _model(),
-            TrainingConfig(epochs=4, log_every=0, patience=0, checkpoint_every_steps=2),
+            TrainingConfig(epochs=4, log_every=0, patience=0, checkpoint_every_batches=2),
             run_directory=tmp_path,
         )
         fresh.load_checkpoint(tmp_path / "mid.pt")
@@ -504,7 +504,7 @@ class TestMidEpochCheckpoints:
         batches = [_batch(size=2, seed=i) for i in range(8)]
         trainer = Trainer(
             _model(), TrainingConfig(epochs=1, log_every=0, patience=0,
-                                     checkpoint_every_steps=0),
+                                     checkpoint_every_batches=0),
             run_directory=tmp_path,
         )
         trainer.batch_in_epoch = 5
@@ -519,3 +519,90 @@ class TestMidEpochCheckpoints:
         trainer.batch_in_epoch = 2
         trainer._train_epoch(_FakeLoader([_batch() for _ in range(4)]))
         assert trainer.batch_in_epoch == 0
+
+
+class TestGradientAccumulation:
+    """Raises the optimizer batch without raising peak memory.
+
+    The physical batch is capped by VRAM: the residue budget of 65,536 peaks at
+    6.66 GiB and doubling it exhausts the card. Accumulation is the only way to
+    a significantly larger effective batch on this hardware.
+    """
+
+    def test_the_optimizer_steps_once_per_accumulation_group(self):
+        batches = [_batch(seed=i) for i in range(8)]
+        trainer = Trainer(
+            _model(),
+            TrainingConfig(epochs=1, log_every=0, patience=0, accumulate_steps=4),
+        )
+        trainer.fit(_FakeLoader(batches))
+        assert trainer.global_step == 2, "8 micro-batches at accumulate 4 is 2 steps"
+
+    def test_a_trailing_partial_group_still_steps(self):
+        """Otherwise the last few batches of an epoch contribute nothing."""
+        trainer = Trainer(
+            _model(),
+            TrainingConfig(epochs=1, log_every=0, patience=0, accumulate_steps=4),
+        )
+        trainer.fit(_FakeLoader([_batch(seed=i) for i in range(6)]))
+        assert trainer.global_step == 2  # one full group, one partial
+
+    def test_accumulating_matches_one_big_batch(self):
+        """The gradient must be the mean over micro-batches, not their sum.
+
+        Summing would scale the effective learning rate by accumulate_steps and
+        silently undo the reason for raising the batch.
+        """
+        torch.manual_seed(5)
+        whole = _batch(size=8, seed=11)
+        halves = [_batch(size=8, seed=11), _batch(size=8, seed=11)]
+
+        def grads(accumulate, loaders):
+            torch.manual_seed(3)
+            trainer = Trainer(
+                _model(),
+                TrainingConfig(epochs=1, log_every=0, patience=0, grad_clip=0.0,
+                               ema_decay=0.0, accumulate_steps=accumulate),
+            )
+            trainer.model.train()
+            trainer.optimizer.zero_grad(set_to_none=True)
+            acc = max(1, accumulate)
+            for batch in loaders:
+                out = trainer.model(
+                    batch.protein_features, batch.protein_mask, batch.ligands
+                )
+                from bindra.training.losses.affinity import affinity_loss
+
+                (affinity_loss(out.prediction, batch.targets).total / acc).backward()
+            return [
+                p.grad.detach().clone()
+                for p in trainer.model.parameters()
+                if p.grad is not None
+            ]
+
+        once = grads(1, [whole])
+        twice = grads(2, halves)
+        assert len(once) == len(twice)
+        for a, b in zip(once, twice):
+            assert torch.allclose(a, b, atol=1e-5)
+
+    def test_the_schedule_counts_optimizer_steps_not_micro_batches(self):
+        """Otherwise cosine decay finishes accumulate_steps times too early."""
+        trainer = Trainer(
+            _model(),
+            TrainingConfig(epochs=1, log_every=0, patience=0, accumulate_steps=4,
+                           warmup_fraction=0.0),
+        )
+        trainer.fit(_FakeLoader([_batch(seed=i) for i in range(8)]))
+        # 8 batches / 4 = 2 steps; the schedule should be exhausted, not 1/4 used.
+        assert trainer.optimizer.param_groups[0]["lr"] < trainer.config.learning_rate
+
+    def test_a_degenerate_accumulation_count_is_refused(self):
+        with pytest.raises(TrainingError, match="accumulate_steps"):
+            TrainingConfig(accumulate_steps=0)
+
+    def test_accumulate_one_is_the_default_and_unchanged(self):
+        assert TrainingConfig().accumulate_steps == 1
+        trainer = Trainer(_model(), TrainingConfig(epochs=1, log_every=0, patience=0))
+        trainer.fit(_FakeLoader([_batch(seed=i) for i in range(5)]))
+        assert trainer.global_step == 5

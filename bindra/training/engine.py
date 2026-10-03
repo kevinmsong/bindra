@@ -83,12 +83,29 @@ class TrainingError(RuntimeError):
 class TrainingConfig:
     """Everything that affects the result, declared in one place and hashed."""
 
-    learning_rate: float = 3e-4
+    #: Peak rate after warmup. 5e-4 by choice, not by sweep -- no tuning run has
+    #: been done, and the 3e-4 and 1e-3 that preceded it were equally
+    #: unvalidated. It sits between them, which is the honest description.
+    #:
+    #: Read it together with ``accumulate_steps``: the physical batch averages
+    #: 87 pairs, which is small enough that step-to-step gradient noise, rather
+    #: than genuine outliers, is what makes `grad_clip` fire. Accumulation is
+    #: what makes a rate in this range reasonable.
+    learning_rate: float = 5e-4
     weight_decay: float = 1e-2
     epochs: int = 10
     #: Fraction of total steps spent warming the learning rate from zero.
     warmup_fraction: float = 0.05
     grad_clip: float = 1.0
+    #: Micro-batches accumulated before each optimizer step. The *physical*
+    #: batch is capped by VRAM -- the residue budget of 65,536 peaks at 6.66 GiB
+    #: and doubling it exhausts the card, because fusion activations scale with
+    #: ``pairs x padded_residues``. This raises the *optimizer* batch instead,
+    #: at no memory cost: at the measured mean of 87 pairs per micro-batch, 4
+    #: gives an effective ~348 and 8 gives ~700. Worth more than it looks at
+    #: lr 1e-3, where a batch of 87 is small enough that step-to-step gradient
+    #: noise is what triggers clipping.
+    accumulate_steps: int = 1
     #: bf16 on this GPU, not fp16: bf16 has the same exponent range as fp32, so
     #: no loss scaler is needed and a large censored penalty cannot overflow to
     #: inf the way it can in fp16.
@@ -105,10 +122,20 @@ class TrainingConfig:
     selection_mode: str = "min"
     seed: int = 20261001
     log_every: int = 50
-    #: Write ``last.pt`` every N optimizer steps, not only at epoch boundaries.
+    #: Per-step detail: the three loss terms separately, the pre-clip gradient
+    #: norm, batch shape, and how much of each step was spent waiting for data
+    #: rather than computing. Costs one extra host-device sync per logged step,
+    #: so it is off by default and on when you are watching.
+    verbose: bool = False
+    #: Write ``last.pt`` every N **micro-batches**, not optimizer steps, so the
+    #: cadence is how much *work* is at risk rather than something that
+    #: stretches by ``accumulate_steps``. At the measured ~2.3 batches/s this is
+    #: roughly two minutes. The write itself lands only on an accumulation
+    #: boundary, so the saved optimizer state is never mid-group. 0 disables.
+    #:
     #: An epoch here is hours: the first real run was interrupted 42 minutes in
-    #: and lost all of it, because nothing had been written yet. 0 disables.
-    checkpoint_every_steps: int = 500
+    #: and lost all of it, because nothing had been written yet.
+    checkpoint_every_batches: int = 250
     loss: AffinityLossConfig = field(default_factory=AffinityLossConfig)
 
     def __post_init__(self) -> None:
@@ -120,6 +147,10 @@ class TrainingConfig:
             raise TrainingError(f"warmup_fraction must be in [0, 1)")
         if not 0.0 <= self.ema_decay < 1.0:
             raise TrainingError(f"ema_decay must be in [0, 1)")
+        if self.accumulate_steps < 1:
+            raise TrainingError(
+                f"accumulate_steps must be >= 1, got {self.accumulate_steps}"
+            )
 
     @property
     def torch_amp_dtype(self) -> torch.dtype:
@@ -127,13 +158,15 @@ class TrainingConfig:
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
-            "checkpoint_every_steps": self.checkpoint_every_steps,
+            "checkpoint_every_batches": self.checkpoint_every_batches,
             "learning_rate": self.learning_rate,
             "weight_decay": self.weight_decay,
             "epochs": self.epochs,
             "warmup_fraction": self.warmup_fraction,
             "grad_clip": self.grad_clip,
+            "accumulate_steps": self.accumulate_steps,
             "amp_dtype": self.amp_dtype,
+            "verbose": self.verbose,
             "use_amp": self.use_amp,
             "ema_decay": self.ema_decay,
             "patience": self.patience,
@@ -468,7 +501,11 @@ class Trainer:
     ) -> list[dict[str, Any]]:
         """Train, validating after each epoch. Never touches the test partition."""
         self._assert_partitions(train_loader, val_loader)
-        total_steps = max(1, len(train_loader) * self.config.epochs)
+        total_steps = max(
+            1,
+            math.ceil(len(train_loader) / self.config.accumulate_steps)
+            * self.config.epochs,
+        )
         if self.scheduler is None:
             self.scheduler = cosine_schedule_with_warmup(
                 self.optimizer,
@@ -518,6 +555,10 @@ class Trainer:
         n_batches = len(loader)
         if self.device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(self.device)
+        waiting = 0.0
+        micro = 0
+        accumulate = self.config.accumulate_steps
+        last_tick = time.perf_counter()
         skip = self.batch_in_epoch
         if skip:
             print(
@@ -528,8 +569,13 @@ class Trainer:
         for index, batch in enumerate(loader):
             if index < skip:
                 continue
+            # Everything between the end of the last step and here was spent
+            # waiting on the loader. The split between this and compute is the
+            # whole question when throughput disappoints.
+            waiting += time.perf_counter() - last_tick
             batch = batch.to(self.device)
-            self.optimizer.zero_grad(set_to_none=True)
+            if micro == 0:
+                self.optimizer.zero_grad(set_to_none=True)
             with torch.autocast(
                 self.device.type,
                 dtype=self.config.torch_amp_dtype,
@@ -541,36 +587,59 @@ class Trainer:
                 loss = affinity_loss(
                     output.prediction, batch.targets, config=self.config.loss
                 )
-            loss.total.backward()
-            if self.config.grad_clip:
-                torch.nn.utils.clip_grad_norm_(
-                    self.model.parameters(), self.config.grad_clip
-                )
-            self.optimizer.step()
-            if self.scheduler is not None:
-                self.scheduler.step()
-            if self.ema is not None:
-                self.ema.update(self.model)
-            self.global_step += 1
+            # Scaled so the accumulated gradient is the mean over micro-batches
+            # rather than their sum, which would scale the effective rate by
+            # accumulate_steps and undo the point of raising the batch.
+            (loss.total / accumulate).backward()
+            micro += 1
+
+            grad_norm = None
+            stepped = micro == accumulate or index == n_batches - 1
+            if stepped:
+                if self.config.grad_clip:
+                    grad_norm = torch.nn.utils.clip_grad_norm_(
+                        self.model.parameters(), self.config.grad_clip
+                    )
+                self.optimizer.step()
+                if self.scheduler is not None:
+                    self.scheduler.step()
+                if self.ema is not None:
+                    self.ema.update(self.model)
+                self.global_step += 1
+                micro = 0
             metrics.update(loss, batch)
             if self.config.log_every and (
                 index % self.config.log_every == 0 or index == n_batches - 1
             ):
-                self._log_step(index, n_batches, metrics, started)
+                self._log_step(
+                    index, n_batches, metrics, started,
+                    loss=loss, grad_norm=grad_norm, batch=batch, waiting=waiting,
+                )
             if (
-                self.config.checkpoint_every_steps
-                and self.global_step % self.config.checkpoint_every_steps == 0
+                stepped
+                and self.config.checkpoint_every_batches
+                and (index + 1) % self.config.checkpoint_every_batches < accumulate
             ):
                 # Mid-epoch, so an interruption costs minutes rather than hours.
                 # `batch_in_epoch` lets a resume skip what it already saw instead
                 # of silently replaying it, which would weight those pairs twice.
                 self.batch_in_epoch = index + 1
                 self.save_checkpoint("last.pt")
+            last_tick = time.perf_counter()
         self.batch_in_epoch = 0
         return metrics.report(self.epoch, "train", time.perf_counter() - started)
 
     def _log_step(
-        self, index: int, n_batches: int, metrics: "_MetricAccumulator", started: float
+        self,
+        index: int,
+        n_batches: int,
+        metrics: "_MetricAccumulator",
+        started: float,
+        *,
+        loss=None,
+        grad_norm=None,
+        batch=None,
+        waiting: float = 0.0,
     ) -> None:
         """One progress line: where the epoch is, how fast, and how it is doing.
 
@@ -598,6 +667,26 @@ class Trainer:
         if self.device.type == "cuda":
             memory = f" | {torch.cuda.max_memory_allocated(self.device) / 2**30:.1f}G"
 
+        detail = ""
+        if self.config.verbose and loss is not None:
+            share = 100 * waiting / max(1e-9, elapsed)
+            parts = [
+                f"ex {float(loss.exact_loss):.4f}",
+                f"cen {float(loss.censored_loss):.4f}",
+                f"aux {float(loss.auxiliary_loss):.4f}",
+            ]
+            if grad_norm is not None:
+                clipped = "*" if float(grad_norm) > self.config.grad_clip else " "
+                parts.append(f"|g| {float(grad_norm):.3f}{clipped}")
+            if batch is not None:
+                parts.append(
+                    f"b {batch.size}x{batch.padded_residues}"
+                    f" pad {batch.padding_fraction:.2f}"
+                    f" atoms {batch.ligands.total_atoms}"
+                )
+            parts.append(f"wait {share:.0f}%")
+            detail = NEWLINE + "        " + "  ".join(parts)
+
         print(
             f"  e{self.epoch} {done:>5}/{n_batches} ({100 * done / n_batches:5.1f}%)"
             f" step {self.global_step:>6}"
@@ -608,7 +697,8 @@ class Trainer:
             f" | {rate:5.0f} pair/s"
             f" | {_duration(elapsed)} elapsed, {_duration(remaining)} left"
             f" | lr {self.optimizer.param_groups[0]['lr']:.2e}{memory}"
-            + (" | " + " ".join(per_endpoint) if per_endpoint else ""),
+            + (" | " + " ".join(per_endpoint) if per_endpoint else "")
+            + detail,
             flush=True,
         )
 
