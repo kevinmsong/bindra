@@ -335,6 +335,100 @@ class PairDataset:
             count=len(self.frame),
         )
 
+    @classmethod
+    def from_queries(
+        cls,
+        processed: Path | str,
+        queries,
+        *,
+        protein_cache: ProteinFeatureCache,
+        length_multiple: int = 128,
+    ) -> "PairDataset":
+        """Build from a benchmark panel's **query** table -- no labels involved.
+
+        A panel's queries carry ``identity_key``, ``sequence_sha256`` and
+        ``endpoint``, which is everything needed to predict. The p-values sit in
+        the panel's sealed directory and are not touched here; the batch's
+        target fields are filled with placeholders that the prediction path
+        never reads, purely so the batch keeps one shape throughout the codebase.
+        """
+        import numpy as np
+        import pandas as pd
+
+        processed = Path(processed)
+        instance = cls.__new__(cls)
+        instance.processed = processed
+        instance.partition = "panel"
+        instance.protein_cache = protein_cache
+        instance._metadata = protein_cache.metadata
+        instance.length_multiple = length_multiple
+
+        ligands = pd.concat(
+            [
+                pd.read_parquet(
+                    path, columns=["identity_key", "standardized_smiles", "status"]
+                )
+                for path in sorted((processed / "ligands").glob("*.parquet"))
+            ],
+            ignore_index=True,
+        )
+        ligands = ligands[ligands["status"] == "OK"].drop_duplicates("identity_key")
+        frame = queries.merge(
+            ligands[["identity_key", "standardized_smiles"]],
+            on="identity_key",
+            how="inner",
+        )
+
+        constructs = pd.read_parquet(
+            processed / "target_constructs.parquet",
+            columns=["sequence_ref", "sequence_sha256", "status"],
+        )
+        constructs = constructs[constructs["status"] == "OK"]
+        sequences = pd.read_parquet(
+            processed / "sequences_raw.parquet",
+            columns=["sequence_ref", "sequence", "sequence_length"],
+        ).set_index("sequence_ref")
+        constructs = constructs.join(sequences, on="sequence_ref").drop_duplicates(
+            "sequence_sha256"
+        )
+        frame = frame.merge(
+            constructs[["sequence_sha256", "sequence_length"]],
+            on="sequence_sha256",
+            how="inner",
+        )
+
+        # Placeholders. `endpoint` is a query column and is real; the rest exist
+        # only so AffinityTargets can be constructed, and the prediction path
+        # reads nothing but endpoint_index.
+        frame = frame.assign(
+            p_value=0.0,
+            is_exact=True,
+            lower_bound=np.nan,
+            upper_bound=np.nan,
+            ic50_tier="na",
+            primary_regression_eligible=True,
+        )
+        if "observation_id" not in frame.columns:
+            frame = frame.assign(
+                observation_id=[f"q{i}" for i in range(len(frame))]
+            )
+
+        instance.frame = frame.reset_index(drop=True)
+        instance.lengths = instance.frame["sequence_length"].to_numpy().astype(int)
+        unique = constructs.drop_duplicates("sequence_sha256")
+        key_by_hash = {
+            digest: instance._metadata.cache_key(sequence)
+            for digest, sequence in zip(unique["sequence_sha256"], unique["sequence"])
+        }
+        instance._unique_keys = list(dict.fromkeys(key_by_hash.values()))
+        position = {key: index for index, key in enumerate(instance._unique_keys)}
+        instance._key_index = np.fromiter(
+            (position[key_by_hash[d]] for d in instance.frame["sequence_sha256"]),
+            dtype=np.int32,
+            count=len(instance.frame),
+        )
+        return instance
+
     def cache_key(self, row: int) -> str:
         """Protein cache key for one observation row."""
         return self._unique_keys[int(self._key_index[row])]
