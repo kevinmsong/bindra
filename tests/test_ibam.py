@@ -613,3 +613,120 @@ class TestPlots:
         )
         written = plot_residue_atom_heatmap(export, tmp_path / "renorm")
         assert "renormalised" in written["svg"].read_text(encoding="utf-8")
+
+
+class TestResidueScoresAreNotConstantByConstruction:
+    """The defect this class exists for was live and invisible in a real figure.
+
+    ``per_residue`` is the row sum of the protein->ligand attention. Those rows
+    are softmax-normalised over ligand tokens, so **every residue's total is
+    exactly 1.0** -- on a real trained checkpoint it measured 1.000000 for all
+    99 residues, std 5.7e-08. The per-residue profile was therefore a flat band
+    and ``top_residues`` was argsort over ties, presented as a ranking. The
+    ligand->protein direction is the one whose rows normalise over residues, so
+    it is the one that can answer "which residues does the model look at".
+    """
+
+    def test_per_residue_really_is_constant(self, stack, ligand_features):
+        """The premise. If this ever fails, the rest of this class is moot."""
+        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        assert np.allclose(export.per_residue, 1.0, atol=1e-5)
+        assert export.per_residue.std() < 1e-5
+
+    def test_the_ligand_to_protein_direction_is_exported(self, stack, ligand_features):
+        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        assert export.token_residue is not None
+        assert export.residue_salience is not None
+        assert export.token_residue.shape == (
+            len(ligand_features.token_types),
+            export.sequence_length,
+        )
+
+    def test_its_rows_normalise_over_residues_not_atoms(self, stack, ligand_features):
+        """Which is exactly why summing it per residue says something."""
+        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        assert np.allclose(export.token_residue.sum(axis=1), 1.0, atol=1e-5)
+
+    def test_the_salience_varies_across_residues(self, stack, ligand_features):
+        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        assert export.residue_salience.std() > 1e-4
+
+    def test_ranking_uses_the_salience_and_says_so(self, stack, ligand_features):
+        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        assert export.residue_scores_are_informative
+        assert np.allclose(export.residue_scores, export.residue_salience)
+        scores = [score for _, score in export.top_residues(5)]
+        assert scores == sorted(scores, reverse=True)
+        assert scores[0] > scores[-1], "a real ranking, not ties"
+
+    def test_an_export_without_the_second_direction_declares_itself_uninformative(
+        self, stack, ligand_features
+    ):
+        """Old exports still load; they just must not claim to rank anything."""
+        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        legacy = IBAMExport(
+            **{
+                **{f: getattr(export, f) for f in export.__dataclass_fields__},
+                "token_residue": None,
+                "residue_salience": None,
+            }
+        )
+        assert not legacy.residue_scores_are_informative
+        assert np.allclose(legacy.residue_scores, legacy.per_residue)
+
+    def test_the_metadata_names_which_direction_the_scores_came_from(
+        self, stack, ligand_features
+    ):
+        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        metadata = export.metadata()
+        assert metadata["has_ligand_to_protein"] is True
+        assert metadata["residue_scores_are_informative"] is True
+        assert "ligand->protein" in metadata["residue_score_source"]
+
+    def test_a_window_carries_both_directions_through(self, stack, ligand_features):
+        export = export_ibam(
+            _fused(stack, ligand_features.num_atoms),
+            ligand_features,
+            residue_positions=torch.arange(100, 107),
+        )
+        window = export.residue_window(102, 105)
+        assert window.token_residue.shape == (export.token_residue.shape[0], 3)
+        assert window.residue_salience.shape == (3,)
+        assert np.allclose(window.residue_salience, export.residue_salience[2:5])
+
+    def test_the_arrays_round_trip_to_disk(self, stack, ligand_features, tmp_path):
+        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        written = export.write(tmp_path / "e")
+        loaded = np.load(written["matrices"])
+        assert np.allclose(loaded["residue_salience"], export.residue_salience)
+        assert np.allclose(loaded["token_residue"], export.token_residue)
+
+    def test_a_figure_from_an_uninformative_export_says_so_on_its_face(
+        self, stack, ligand_features, tmp_path
+    ):
+        """Burned into the figure, because that is where it gets misread."""
+        from bindra.ibam.plots import plot_residue_profile
+
+        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        legacy = IBAMExport(
+            **{
+                **{f: getattr(export, f) for f in export.__dataclass_fields__},
+                "token_residue": None,
+                "residue_salience": None,
+            }
+        )
+        written = plot_residue_profile(legacy, tmp_path / "flat")
+        text = written["svg"].read_text(encoding="utf-8")
+        assert "constant by construction" in text
+        assert "CONSTANT by construction" in text, "the axis label must say it too"
+
+    def test_a_figure_from_a_good_export_carries_no_such_warning(
+        self, stack, ligand_features, tmp_path
+    ):
+        from bindra.ibam.plots import plot_residue_profile
+
+        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        written = plot_residue_profile(export, tmp_path / "fine")
+        text = written["svg"].read_text(encoding="utf-8")
+        assert "constant by construction" not in text
+        assert "ligand attention onto residue" in text

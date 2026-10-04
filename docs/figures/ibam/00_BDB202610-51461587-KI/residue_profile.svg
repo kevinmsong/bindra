@@ -1,0 +1,817 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="716.4pt" height="301.287281pt" viewBox="0 0 716.4 301.287281" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <title>BINDRA iBAM</title>
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:title>BINDRA iBAM</dc:title>
+    <dc:date>2026-10-04T17:49:37.698448</dc:date>
+    <dc:description>N#CCCN(CCc1ccc(S(N)(=O)=O)cc1)C(=O)c1ccc(-c2cssc2=S)cc1 | ligand_gat + esmc | checkpoint runs\random_pair-gat-frozen-v1\best.pt
+aggregation: last layer, mean over heads, bond contributions split equally between endpoint atoms (derived aggregation) [a69d0443fbd69c13]
+Attention-based explanation. NOT an experimentally established contact map, binding pose, or mechanism. The residue x atom view is a derived aggregation.</dc:description>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>BINDRA</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 301.287281 
+L 716.4 301.287281 
+L 716.4 0 
+L 0 0 
+z
+" style="fill: #ffffff"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 96.84 214.158281 
+L 710.64 214.158281 
+L 710.64 20.118281 
+L 96.84 20.118281 
+z
+" style="fill: #ffffff"/>
+   </g>
+   <g id="FillBetweenPolyCollection_1">
+    <defs>
+     <path id="ma2b7437e56" d="M 102.857647 -87.129 
+L 102.857647 -91.735011 
+L 105.181063 -92.012116 
+L 107.504479 -92.034223 
+L 109.827895 -91.682651 
+L 112.15131 -91.367874 
+L 114.474726 -91.58995 
+L 116.798142 -91.480122 
+L 119.121558 -91.283827 
+L 121.444974 -91.613549 
+L 123.76839 -91.747853 
+L 126.091806 -91.401811 
+L 128.415221 -91.67766 
+L 130.738637 -91.473967 
+L 133.062053 -91.390626 
+L 135.385469 -91.297784 
+L 137.708885 -91.741927 
+L 140.032301 -91.561695 
+L 142.355717 -91.942756 
+L 144.679132 -91.350393 
+L 147.002548 -91.329916 
+L 149.325964 -91.861817 
+L 151.64938 -91.812174 
+L 153.972796 -91.322742 
+L 156.296212 -92.36861 
+L 158.619628 -93.291417 
+L 160.943043 -91.441934 
+L 163.266459 -92.410457 
+L 165.589875 -92.016543 
+L 167.913291 -91.722345 
+L 170.236707 -92.04595 
+L 172.560123 -91.279612 
+L 174.883538 -91.574023 
+L 177.206954 -91.689349 
+L 179.53037 -92.136804 
+L 181.853786 -91.878645 
+L 184.177202 -92.144396 
+L 186.500618 -92.198107 
+L 188.824034 -91.551363 
+L 191.147449 -91.87776 
+L 193.470865 -91.971711 
+L 195.794281 -91.533287 
+L 198.117697 -91.79515 
+L 200.441113 -91.99689 
+L 202.764529 -91.699255 
+L 205.087945 -92.613139 
+L 207.41136 -91.64618 
+L 209.734776 -91.578789 
+L 212.058192 -91.870421 
+L 214.381608 -91.473367 
+L 216.705024 -91.744084 
+L 219.02844 -91.39627 
+L 221.351856 -92.108411 
+L 223.675271 -91.947663 
+L 225.998687 -92.538809 
+L 228.322103 -91.968525 
+L 230.645519 -91.724987 
+L 232.968935 -92.276812 
+L 235.292351 -92.388799 
+L 237.615767 -92.129782 
+L 239.939182 -91.676583 
+L 242.262598 -91.978355 
+L 244.586014 -92.483563 
+L 246.90943 -91.629572 
+L 249.232846 -92.140898 
+L 251.556262 -91.328016 
+L 253.879677 -91.552072 
+L 256.203093 -93.304487 
+L 258.526509 -92.214217 
+L 260.849925 -91.525756 
+L 263.173341 -92.019907 
+L 265.496757 -91.721121 
+L 267.820173 -91.971558 
+L 270.143588 -92.124718 
+L 272.467004 -92.675349 
+L 274.79042 -93.022157 
+L 277.113836 -92.506339 
+L 279.437252 -91.569743 
+L 281.760668 -91.247195 
+L 284.084084 -91.674834 
+L 286.407499 -92.914625 
+L 288.730915 -93.339519 
+L 291.054331 -91.828723 
+L 293.377747 -91.563391 
+L 295.701163 -91.523347 
+L 298.024579 -91.77589 
+L 300.347995 -91.187665 
+L 302.67141 -91.493509 
+L 304.994826 -91.713723 
+L 307.318242 -91.649046 
+L 309.641658 -91.497816 
+L 311.965074 -92.121461 
+L 314.28849 -231.93497 
+L 316.611906 -91.536119 
+L 318.935321 -92.148614 
+L 321.258737 -91.620736 
+L 323.582153 -92.101947 
+L 325.905569 -91.833671 
+L 328.228985 -91.932003 
+L 330.552401 -92.153371 
+L 332.875816 -91.697192 
+L 335.199232 -92.248324 
+L 337.522648 -91.835962 
+L 339.846064 -92.374057 
+L 342.16948 -92.056968 
+L 344.492896 -91.711366 
+L 346.816312 -91.508481 
+L 349.139727 -92.52295 
+L 351.463143 -91.56538 
+L 353.786559 -91.818536 
+L 356.109975 -91.931686 
+L 358.433391 -91.576526 
+L 360.756807 -92.357566 
+L 363.080223 -91.544494 
+L 365.403638 -91.421003 
+L 367.727054 -91.322327 
+L 370.05047 -91.390108 
+L 372.373886 -91.227977 
+L 374.697302 -91.96355 
+L 377.020718 -91.94414 
+L 379.344134 -92.09865 
+L 381.667549 -92.109283 
+L 383.990965 -92.199768 
+L 386.314381 -91.527923 
+L 388.637797 -92.20043 
+L 390.961213 -91.897979 
+L 393.284629 -92.316259 
+L 395.608045 -91.798643 
+L 397.93146 -92.307212 
+L 400.254876 -91.394773 
+L 402.578292 -91.729699 
+L 404.901708 -91.326514 
+L 407.225124 -91.426703 
+L 409.54854 -91.996175 
+L 411.871955 -92.009954 
+L 414.195371 -91.983516 
+L 416.518787 -92.030904 
+L 418.842203 -91.879028 
+L 421.165619 -91.894467 
+L 423.489035 -91.745985 
+L 425.812451 -91.563059 
+L 428.135866 -91.748625 
+L 430.459282 -92.34613 
+L 432.782698 -91.44307 
+L 435.106114 -91.673942 
+L 437.42953 -91.939875 
+L 439.752946 -91.143443 
+L 442.076362 -91.53998 
+L 444.399777 -91.736319 
+L 446.723193 -91.931886 
+L 449.046609 -92.047852 
+L 451.370025 -91.946237 
+L 453.693441 -91.894082 
+L 456.016857 -91.585277 
+L 458.340273 -91.956654 
+L 460.663688 -91.467089 
+L 462.987104 -91.7856 
+L 465.31052 -91.240838 
+L 467.633936 -92.351078 
+L 469.957352 -92.102683 
+L 472.280768 -91.283752 
+L 474.604184 -91.678747 
+L 476.927599 -93.717827 
+L 479.251015 -92.068522 
+L 481.574431 -91.194758 
+L 483.897847 -92.258268 
+L 486.221263 -91.725761 
+L 488.544679 -91.959935 
+L 490.868094 -92.166103 
+L 493.19151 -92.713871 
+L 495.514926 -92.025367 
+L 497.838342 -92.793869 
+L 500.161758 -93.810621 
+L 502.485174 -92.101746 
+L 504.80859 -91.944798 
+L 507.132005 -91.980439 
+L 509.455421 -92.111742 
+L 511.778837 -92.670218 
+L 514.102253 -91.60414 
+L 516.425669 -91.984009 
+L 518.749085 -91.842652 
+L 521.072501 -91.970895 
+L 523.395916 -91.821615 
+L 525.719332 -91.793024 
+L 528.042748 -91.817738 
+L 530.366164 -91.595904 
+L 532.68958 -92.632941 
+L 535.012996 -92.37754 
+L 537.336412 -92.030058 
+L 539.659827 -91.559214 
+L 541.983243 -91.751126 
+L 544.306659 -94.088296 
+L 546.630075 -92.812778 
+L 548.953491 -92.048466 
+L 551.276907 -91.232257 
+L 553.600323 -92.331163 
+L 555.923738 -91.804832 
+L 558.247154 -91.924403 
+L 560.57057 -91.884167 
+L 562.893986 -91.923854 
+L 565.217402 -91.638569 
+L 567.540818 -91.303305 
+L 569.864233 -91.605807 
+L 572.187649 -91.248601 
+L 574.511065 -91.485877 
+L 576.834481 -91.904107 
+L 579.157897 -91.604852 
+L 581.481313 -91.227315 
+L 583.804729 -93.380486 
+L 586.128144 -91.178867 
+L 588.45156 -92.210174 
+L 590.774976 -91.660531 
+L 593.098392 -92.030021 
+L 595.421808 -91.531416 
+L 597.745224 -91.312977 
+L 600.06864 -91.565978 
+L 602.392055 -91.405956 
+L 604.715471 -91.620337 
+L 607.038887 -91.483462 
+L 609.362303 -92.138289 
+L 611.685719 -91.529 
+L 614.009135 -91.498113 
+L 616.332551 -91.465112 
+L 618.655966 -91.540358 
+L 620.979382 -91.949692 
+L 623.302798 -91.53693 
+L 625.626214 -91.55851 
+L 627.94963 -91.37057 
+L 630.273046 -91.531983 
+L 632.596462 -91.546499 
+L 634.919877 -91.568006 
+L 637.243293 -91.503589 
+L 639.566709 -91.795165 
+L 641.890125 -92.099436 
+L 644.213541 -91.856371 
+L 646.536957 -91.805304 
+L 648.860372 -91.947812 
+L 651.183788 -91.577675 
+L 653.507204 -92.084636 
+L 655.83062 -92.185106 
+L 658.154036 -91.785439 
+L 660.477452 -92.376154 
+L 662.800868 -92.017791 
+L 665.124283 -91.82624 
+L 667.447699 -91.294774 
+L 669.771115 -91.709994 
+L 672.094531 -91.330377 
+L 674.417947 -92.388705 
+L 676.741363 -91.453195 
+L 679.064779 -91.930685 
+L 681.388194 -91.690881 
+L 683.71161 -92.313951 
+L 686.035026 -91.81761 
+L 688.358442 -91.460425 
+L 690.681858 -92.117001 
+L 693.005274 -91.656168 
+L 695.32869 -92.277256 
+L 697.652105 -91.344094 
+L 699.975521 -91.609606 
+L 702.298937 -91.803812 
+L 704.622353 -91.746436 
+L 704.622353 -87.129 
+L 704.622353 -87.129 
+L 702.298937 -87.129 
+L 699.975521 -87.129 
+L 697.652105 -87.129 
+L 695.32869 -87.129 
+L 693.005274 -87.129 
+L 690.681858 -87.129 
+L 688.358442 -87.129 
+L 686.035026 -87.129 
+L 683.71161 -87.129 
+L 681.388194 -87.129 
+L 679.064779 -87.129 
+L 676.741363 -87.129 
+L 674.417947 -87.129 
+L 672.094531 -87.129 
+L 669.771115 -87.129 
+L 667.447699 -87.129 
+L 665.124283 -87.129 
+L 662.800868 -87.129 
+L 660.477452 -87.129 
+L 658.154036 -87.129 
+L 655.83062 -87.129 
+L 653.507204 -87.129 
+L 651.183788 -87.129 
+L 648.860372 -87.129 
+L 646.536957 -87.129 
+L 644.213541 -87.129 
+L 641.890125 -87.129 
+L 639.566709 -87.129 
+L 637.243293 -87.129 
+L 634.919877 -87.129 
+L 632.596462 -87.129 
+L 630.273046 -87.129 
+L 627.94963 -87.129 
+L 625.626214 -87.129 
+L 623.302798 -87.129 
+L 620.979382 -87.129 
+L 618.655966 -87.129 
+L 616.332551 -87.129 
+L 614.009135 -87.129 
+L 611.685719 -87.129 
+L 609.362303 -87.129 
+L 607.038887 -87.129 
+L 604.715471 -87.129 
+L 602.392055 -87.129 
+L 600.06864 -87.129 
+L 597.745224 -87.129 
+L 595.421808 -87.129 
+L 593.098392 -87.129 
+L 590.774976 -87.129 
+L 588.45156 -87.129 
+L 586.128144 -87.129 
+L 583.804729 -87.129 
+L 581.481313 -87.129 
+L 579.157897 -87.129 
+L 576.834481 -87.129 
+L 574.511065 -87.129 
+L 572.187649 -87.129 
+L 569.864233 -87.129 
+L 567.540818 -87.129 
+L 565.217402 -87.129 
+L 562.893986 -87.129 
+L 560.57057 -87.129 
+L 558.247154 -87.129 
+L 555.923738 -87.129 
+L 553.600323 -87.129 
+L 551.276907 -87.129 
+L 548.953491 -87.129 
+L 546.630075 -87.129 
+L 544.306659 -87.129 
+L 541.983243 -87.129 
+L 539.659827 -87.129 
+L 537.336412 -87.129 
+L 535.012996 -87.129 
+L 532.68958 -87.129 
+L 530.366164 -87.129 
+L 528.042748 -87.129 
+L 525.719332 -87.129 
+L 523.395916 -87.129 
+L 521.072501 -87.129 
+L 518.749085 -87.129 
+L 516.425669 -87.129 
+L 514.102253 -87.129 
+L 511.778837 -87.129 
+L 509.455421 -87.129 
+L 507.132005 -87.129 
+L 504.80859 -87.129 
+L 502.485174 -87.129 
+L 500.161758 -87.129 
+L 497.838342 -87.129 
+L 495.514926 -87.129 
+L 493.19151 -87.129 
+L 490.868094 -87.129 
+L 488.544679 -87.129 
+L 486.221263 -87.129 
+L 483.897847 -87.129 
+L 481.574431 -87.129 
+L 479.251015 -87.129 
+L 476.927599 -87.129 
+L 474.604184 -87.129 
+L 472.280768 -87.129 
+L 469.957352 -87.129 
+L 467.633936 -87.129 
+L 465.31052 -87.129 
+L 462.987104 -87.129 
+L 460.663688 -87.129 
+L 458.340273 -87.129 
+L 456.016857 -87.129 
+L 453.693441 -87.129 
+L 451.370025 -87.129 
+L 449.046609 -87.129 
+L 446.723193 -87.129 
+L 444.399777 -87.129 
+L 442.076362 -87.129 
+L 439.752946 -87.129 
+L 437.42953 -87.129 
+L 435.106114 -87.129 
+L 432.782698 -87.129 
+L 430.459282 -87.129 
+L 428.135866 -87.129 
+L 425.812451 -87.129 
+L 423.489035 -87.129 
+L 421.165619 -87.129 
+L 418.842203 -87.129 
+L 416.518787 -87.129 
+L 414.195371 -87.129 
+L 411.871955 -87.129 
+L 409.54854 -87.129 
+L 407.225124 -87.129 
+L 404.901708 -87.129 
+L 402.578292 -87.129 
+L 400.254876 -87.129 
+L 397.93146 -87.129 
+L 395.608045 -87.129 
+L 393.284629 -87.129 
+L 390.961213 -87.129 
+L 388.637797 -87.129 
+L 386.314381 -87.129 
+L 383.990965 -87.129 
+L 381.667549 -87.129 
+L 379.344134 -87.129 
+L 377.020718 -87.129 
+L 374.697302 -87.129 
+L 372.373886 -87.129 
+L 370.05047 -87.129 
+L 367.727054 -87.129 
+L 365.403638 -87.129 
+L 363.080223 -87.129 
+L 360.756807 -87.129 
+L 358.433391 -87.129 
+L 356.109975 -87.129 
+L 353.786559 -87.129 
+L 351.463143 -87.129 
+L 349.139727 -87.129 
+L 346.816312 -87.129 
+L 344.492896 -87.129 
+L 342.16948 -87.129 
+L 339.846064 -87.129 
+L 337.522648 -87.129 
+L 335.199232 -87.129 
+L 332.875816 -87.129 
+L 330.552401 -87.129 
+L 328.228985 -87.129 
+L 325.905569 -87.129 
+L 323.582153 -87.129 
+L 321.258737 -87.129 
+L 318.935321 -87.129 
+L 316.611906 -87.129 
+L 314.28849 -87.129 
+L 311.965074 -87.129 
+L 309.641658 -87.129 
+L 307.318242 -87.129 
+L 304.994826 -87.129 
+L 302.67141 -87.129 
+L 300.347995 -87.129 
+L 298.024579 -87.129 
+L 295.701163 -87.129 
+L 293.377747 -87.129 
+L 291.054331 -87.129 
+L 288.730915 -87.129 
+L 286.407499 -87.129 
+L 284.084084 -87.129 
+L 281.760668 -87.129 
+L 279.437252 -87.129 
+L 277.113836 -87.129 
+L 274.79042 -87.129 
+L 272.467004 -87.129 
+L 270.143588 -87.129 
+L 267.820173 -87.129 
+L 265.496757 -87.129 
+L 263.173341 -87.129 
+L 260.849925 -87.129 
+L 258.526509 -87.129 
+L 256.203093 -87.129 
+L 253.879677 -87.129 
+L 251.556262 -87.129 
+L 249.232846 -87.129 
+L 246.90943 -87.129 
+L 244.586014 -87.129 
+L 242.262598 -87.129 
+L 239.939182 -87.129 
+L 237.615767 -87.129 
+L 235.292351 -87.129 
+L 232.968935 -87.129 
+L 230.645519 -87.129 
+L 228.322103 -87.129 
+L 225.998687 -87.129 
+L 223.675271 -87.129 
+L 221.351856 -87.129 
+L 219.02844 -87.129 
+L 216.705024 -87.129 
+L 214.381608 -87.129 
+L 212.058192 -87.129 
+L 209.734776 -87.129 
+L 207.41136 -87.129 
+L 205.087945 -87.129 
+L 202.764529 -87.129 
+L 200.441113 -87.129 
+L 198.117697 -87.129 
+L 195.794281 -87.129 
+L 193.470865 -87.129 
+L 191.147449 -87.129 
+L 188.824034 -87.129 
+L 186.500618 -87.129 
+L 184.177202 -87.129 
+L 181.853786 -87.129 
+L 179.53037 -87.129 
+L 177.206954 -87.129 
+L 174.883538 -87.129 
+L 172.560123 -87.129 
+L 170.236707 -87.129 
+L 167.913291 -87.129 
+L 165.589875 -87.129 
+L 163.266459 -87.129 
+L 160.943043 -87.129 
+L 158.619628 -87.129 
+L 156.296212 -87.129 
+L 153.972796 -87.129 
+L 151.64938 -87.129 
+L 149.325964 -87.129 
+L 147.002548 -87.129 
+L 144.679132 -87.129 
+L 142.355717 -87.129 
+L 140.032301 -87.129 
+L 137.708885 -87.129 
+L 135.385469 -87.129 
+L 133.062053 -87.129 
+L 130.738637 -87.129 
+L 128.415221 -87.129 
+L 126.091806 -87.129 
+L 123.76839 -87.129 
+L 121.444974 -87.129 
+L 119.121558 -87.129 
+L 116.798142 -87.129 
+L 114.474726 -87.129 
+L 112.15131 -87.129 
+L 109.827895 -87.129 
+L 107.504479 -87.129 
+L 105.181063 -87.129 
+L 102.857647 -87.129 
+z
+"/>
+    </defs>
+    <g clip-path="url(#p9c8533fdf3)">
+     <use xlink:href="#ma2b7437e56" x="0" y="301.287281" style="fill: #440154; fill-opacity: 0.85"/>
+    </g>
+   </g>
+   <g id="matplotlib.axis_1">
+    <g id="xtick_1">
+     <g id="line2d_1">
+      <defs>
+       <path id="m2d2d9cf945" d="M 0 0 
+L 0 2.5 
+" style="stroke: #000000; stroke-width: 0.6"/>
+      </defs>
+      <g>
+       <use xlink:href="#m2d2d9cf945" x="100.534231" y="214.158281" style="stroke: #000000; stroke-width: 0.6"/>
+      </g>
+     </g>
+     <g id="text_1">
+      <text style="font-size: 8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: middle" x="100.534231" y="226.236406" transform="rotate(-0 100.534231 226.236406)">0</text>
+     </g>
+    </g>
+    <g id="xtick_2">
+     <g id="line2d_2">
+      <g>
+       <use xlink:href="#m2d2d9cf945" x="216.705024" y="214.158281" style="stroke: #000000; stroke-width: 0.6"/>
+      </g>
+     </g>
+     <g id="text_2">
+      <text style="font-size: 8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: middle" x="216.705024" y="226.236406" transform="rotate(-0 216.705024 226.236406)">50</text>
+     </g>
+    </g>
+    <g id="xtick_3">
+     <g id="line2d_3">
+      <g>
+       <use xlink:href="#m2d2d9cf945" x="332.875816" y="214.158281" style="stroke: #000000; stroke-width: 0.6"/>
+      </g>
+     </g>
+     <g id="text_3">
+      <text style="font-size: 8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: middle" x="332.875816" y="226.236406" transform="rotate(-0 332.875816 226.236406)">100</text>
+     </g>
+    </g>
+    <g id="xtick_4">
+     <g id="line2d_4">
+      <g>
+       <use xlink:href="#m2d2d9cf945" x="449.046609" y="214.158281" style="stroke: #000000; stroke-width: 0.6"/>
+      </g>
+     </g>
+     <g id="text_4">
+      <text style="font-size: 8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: middle" x="449.046609" y="226.236406" transform="rotate(-0 449.046609 226.236406)">150</text>
+     </g>
+    </g>
+    <g id="xtick_5">
+     <g id="line2d_5">
+      <g>
+       <use xlink:href="#m2d2d9cf945" x="565.217402" y="214.158281" style="stroke: #000000; stroke-width: 0.6"/>
+      </g>
+     </g>
+     <g id="text_5">
+      <text style="font-size: 8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: middle" x="565.217402" y="226.236406" transform="rotate(-0 565.217402 226.236406)">200</text>
+     </g>
+    </g>
+    <g id="xtick_6">
+     <g id="line2d_6">
+      <g>
+       <use xlink:href="#m2d2d9cf945" x="681.388194" y="214.158281" style="stroke: #000000; stroke-width: 0.6"/>
+      </g>
+     </g>
+     <g id="text_6">
+      <text style="font-size: 8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: middle" x="681.388194" y="226.236406" transform="rotate(-0 681.388194 226.236406)">250</text>
+     </g>
+    </g>
+    <g id="text_7">
+     <text style="font-size: 9px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: middle" x="403.74" y="238.996875" transform="rotate(-0 403.74 238.996875)">residue in the original sequence (1-based)</text>
+    </g>
+   </g>
+   <g id="matplotlib.axis_2">
+    <g id="ytick_1">
+     <g id="line2d_7">
+      <defs>
+       <path id="m10523a95a1" d="M 0 0 
+L -2.5 0 
+" style="stroke: #000000; stroke-width: 0.6"/>
+      </defs>
+      <g>
+       <use xlink:href="#m10523a95a1" x="96.84" y="214.158281" style="stroke: #000000; stroke-width: 0.6"/>
+      </g>
+     </g>
+     <g id="text_8">
+      <text style="font-size: 8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: end" x="90.84" y="217.197344" transform="rotate(-0 90.84 217.197344)">0.0</text>
+     </g>
+    </g>
+    <g id="ytick_2">
+     <g id="line2d_8">
+      <g>
+       <use xlink:href="#m10523a95a1" x="96.84" y="192.041352" style="stroke: #000000; stroke-width: 0.6"/>
+      </g>
+     </g>
+     <g id="text_9">
+      <text style="font-size: 8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: end" x="90.84" y="195.080414" transform="rotate(-0 90.84 195.080414)">0.5</text>
+     </g>
+    </g>
+    <g id="ytick_3">
+     <g id="line2d_9">
+      <g>
+       <use xlink:href="#m10523a95a1" x="96.84" y="169.924422" style="stroke: #000000; stroke-width: 0.6"/>
+      </g>
+     </g>
+     <g id="text_10">
+      <text style="font-size: 8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: end" x="90.84" y="172.963484" transform="rotate(-0 90.84 172.963484)">1.0</text>
+     </g>
+    </g>
+    <g id="ytick_4">
+     <g id="line2d_10">
+      <g>
+       <use xlink:href="#m10523a95a1" x="96.84" y="147.807492" style="stroke: #000000; stroke-width: 0.6"/>
+      </g>
+     </g>
+     <g id="text_11">
+      <text style="font-size: 8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: end" x="90.84" y="150.846555" transform="rotate(-0 90.84 150.846555)">1.5</text>
+     </g>
+    </g>
+    <g id="ytick_5">
+     <g id="line2d_11">
+      <g>
+       <use xlink:href="#m10523a95a1" x="96.84" y="125.690563" style="stroke: #000000; stroke-width: 0.6"/>
+      </g>
+     </g>
+     <g id="text_12">
+      <text style="font-size: 8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: end" x="90.84" y="128.729625" transform="rotate(-0 90.84 128.729625)">2.0</text>
+     </g>
+    </g>
+    <g id="ytick_6">
+     <g id="line2d_12">
+      <g>
+       <use xlink:href="#m10523a95a1" x="96.84" y="103.573633" style="stroke: #000000; stroke-width: 0.6"/>
+      </g>
+     </g>
+     <g id="text_13">
+      <text style="font-size: 8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: end" x="90.84" y="106.612695" transform="rotate(-0 90.84 106.612695)">2.5</text>
+     </g>
+    </g>
+    <g id="ytick_7">
+     <g id="line2d_13">
+      <g>
+       <use xlink:href="#m10523a95a1" x="96.84" y="81.456703" style="stroke: #000000; stroke-width: 0.6"/>
+      </g>
+     </g>
+     <g id="text_14">
+      <text style="font-size: 8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: end" x="90.84" y="84.495766" transform="rotate(-0 90.84 84.495766)">3.0</text>
+     </g>
+    </g>
+    <g id="ytick_8">
+     <g id="line2d_14">
+      <g>
+       <use xlink:href="#m10523a95a1" x="96.84" y="59.339774" style="stroke: #000000; stroke-width: 0.6"/>
+      </g>
+     </g>
+     <g id="text_15">
+      <text style="font-size: 8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: end" x="90.84" y="62.378836" transform="rotate(-0 90.84 62.378836)">3.5</text>
+     </g>
+    </g>
+    <g id="ytick_9">
+     <g id="line2d_15">
+      <g>
+       <use xlink:href="#m10523a95a1" x="96.84" y="37.222844" style="stroke: #000000; stroke-width: 0.6"/>
+      </g>
+     </g>
+     <g id="text_16">
+      <text style="font-size: 8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: end" x="90.84" y="40.261906" transform="rotate(-0 90.84 40.261906)">4.0</text>
+     </g>
+    </g>
+    <g id="text_17">
+     <text style="font-size: 9px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: middle" x="71.955391" y="117.138281" transform="rotate(-90 71.955391 117.138281)">ligand attention onto residue</text>
+    </g>
+   </g>
+   <g id="line2d_16">
+    <path d="M 96.84 208.884244 
+L 710.64 208.884244 
+" clip-path="url(#p9c8533fdf3)" style="fill: none; stroke-dasharray: 2.8,2.1; stroke-dashoffset: 0; stroke: #999999; stroke-width: 0.7"/>
+   </g>
+   <g id="patch_3">
+    <path d="M 96.84 214.158281 
+L 96.84 20.118281 
+" style="fill: none; stroke: #000000; stroke-width: 0.6; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="patch_4">
+    <path d="M 96.84 214.158281 
+L 710.64 214.158281 
+" style="fill: none; stroke: #000000; stroke-width: 0.6; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="text_18">
+    <text style="font-size: 7px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: end; fill: #666666" x="704.622353" y="207.202604" transform="rotate(-0 704.622353 207.202604)">uniform attention</text>
+   </g>
+   <g id="text_19">
+    <text style="font-size: 7px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: middle; fill: #440154" x="314.28849" y="64.67067" transform="rotate(-0 314.28849 64.67067)">Q92</text>
+   </g>
+   <g id="text_20">
+    <text style="font-size: 7px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: middle; fill: #440154" x="544.306659" y="202.517344" transform="rotate(-0 544.306659 202.517344)">W191</text>
+   </g>
+   <g id="text_21">
+    <text style="font-size: 7px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: middle; fill: #440154" x="500.161758" y="202.79502" transform="rotate(-0 500.161758 202.79502)">S172</text>
+   </g>
+   <g id="text_22">
+    <text style="font-size: 7px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: middle; fill: #440154" x="476.927599" y="202.887814" transform="rotate(-0 476.927599 202.887814)">V162</text>
+   </g>
+   <g id="text_23">
+    <text style="font-size: 7px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: middle; fill: #440154" x="583.804729" y="203.225154" transform="rotate(-0 583.804729 203.225154)">W208</text>
+   </g>
+   <g id="text_24">
+    <text style="font-size: 7px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: middle; fill: #440154" x="288.730915" y="203.266122" transform="rotate(-0 288.730915 203.266122)">G81</text>
+   </g>
+   <g id="text_25">
+    <text style="font-size: 7px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: middle; fill: #440154" x="256.203093" y="203.301154" transform="rotate(-0 256.203093 203.301154)">N67</text>
+   </g>
+   <g id="text_26">
+    <text style="font-size: 7px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: middle; fill: #440154" x="158.619628" y="203.314224" transform="rotate(-0 158.619628 203.314224)">G25</text>
+   </g>
+   <g id="text_27">
+    <text style="font-size: 7px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: middle; fill: #440154" x="274.79042" y="194.583483" transform="rotate(-0 274.79042 194.583483)">D75</text>
+   </g>
+   <g id="text_28">
+    <text style="font-size: 7px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: middle; fill: #440154" x="286.407499" y="185.691016" transform="rotate(-0 286.407499 185.691016)">K80</text>
+   </g>
+   <g id="text_29">
+    <text style="font-size: 7px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: middle; fill: #440154" x="546.630075" y="194.792863" transform="rotate(-0 546.630075 194.792863)">T192</text>
+   </g>
+   <g id="text_30">
+    <text style="font-size: 7px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: middle; fill: #440154" x="497.838342" y="194.811772" transform="rotate(-0 497.838342 194.811772)">K171</text>
+   </g>
+   <g id="text_31">
+    <text style="font-size: 11px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: middle" x="403.74" y="14.118281" transform="rotate(-0 403.74 14.118281)">iBAM per-residue summary - top 12 named</text>
+   </g>
+  </g>
+  <g id="text_32">
+   <text style="font-size: 7.5px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #333333" transform="translate(5.76 251.946422)">N#CCCN(CCc1ccc(S(N)(=O)=O)cc1)C(=O)c1ccc(-c2cssc2=S)cc1 | ligand_gat + esmc | checkpoint runs\random_pair-gat-frozen-v1\best.pt</text>
+   <text style="font-size: 7.5px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #333333" transform="translate(5.76 262.159313)">aggregation: last layer, mean over heads, bond contributions split equally between endpoint atoms (derived aggregation)</text>
+   <text style="font-size: 7.5px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #333333" transform="translate(5.76 272.569664)">[a69d0443fbd69c13]</text>
+   <text style="font-size: 7.5px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #333333" transform="translate(5.76 282.409313)">Attention-based explanation. NOT an experimentally established contact map, binding pose, or mechanism. The residue x atom view is a</text>
+   <text style="font-size: 7.5px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #333333" transform="translate(5.76 292.534313)">derived aggregation.</text>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="p9c8533fdf3">
+   <rect x="96.84" y="20.118281" width="613.8" height="194.04"/>
+  </clipPath>
+ </defs>
+</svg>

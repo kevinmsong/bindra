@@ -175,6 +175,16 @@ class IBAMExport:
     residue_atom_is_derived: bool = True
     disclaimer: str = DISCLAIMER
     ensemble_std: np.ndarray | None = None
+    #: [T, L] ligand->protein attention, the other direction of the fusion.
+    #: Its rows sum to 1 over **residues**, so summing it over ligand tokens is
+    #: a per-residue quantity that actually varies. ``per_residue`` cannot be:
+    #: the protein->ligand rows are softmax-normalised over atoms, so every
+    #: residue's total is exactly 1 and ranking residues by it ranks ties.
+    token_residue: np.ndarray | None = None
+    #: [L] total ligand attention landing on each residue. The honest answer to
+    #: "which residues does this model look at", and what ``top_residues`` uses
+    #: when it is present.
+    residue_salience: np.ndarray | None = None
 
     def __post_init__(self) -> None:
         length, num_tokens = self.residue_token.shape
@@ -206,10 +216,28 @@ class IBAMExport:
     def sequence_length(self) -> int:
         return int(self.residue_token.shape[0])
 
+    @property
+    def residue_scores(self) -> np.ndarray:
+        """The per-residue quantity worth ranking, and the reason it is that one.
+
+        ``residue_salience`` when the ligand->protein direction was exported,
+        ``per_residue`` otherwise. The fallback is retained for exports written
+        before the second direction existed, but it is **constant by
+        construction** -- see :attr:`token_residue` -- so a ranking built on it
+        is a ranking of ties in index order.
+        """
+        return self.per_residue if self.residue_salience is None else self.residue_salience
+
+    @property
+    def residue_scores_are_informative(self) -> bool:
+        """False when the only available per-residue score is constant."""
+        return self.residue_salience is not None
+
     def top_residues(self, count: int = 10) -> list[tuple[int, float]]:
         """``(original sequence position, score)`` for the highest-scoring residues."""
-        order = np.argsort(-self.per_residue)[:count]
-        return [(int(self.residue_positions[i]), float(self.per_residue[i])) for i in order]
+        scores = self.residue_scores
+        order = np.argsort(-scores)[:count]
+        return [(int(self.residue_positions[i]), float(scores[i])) for i in order]
 
     def top_atoms(self, count: int = 10) -> list[tuple[int, float]]:
         """``(atom index, score)``, in standardized-molecule indexing."""
@@ -240,6 +268,12 @@ class IBAMExport:
             nonphysical_mass=self.nonphysical_mass[selected],
             renormalized=self.renormalized,
             attention_by_layer_head=self.attention_by_layer_head[:, :, selected, :],
+            token_residue=(
+                None if self.token_residue is None else self.token_residue[:, selected]
+            ),
+            residue_salience=(
+                None if self.residue_salience is None else self.residue_salience[selected]
+            ),
             policy=self.policy,
             molecule_id=self.molecule_id,
             model_checkpoint=self.model_checkpoint,
@@ -274,6 +308,13 @@ class IBAMExport:
             "token_to_bond": list(self.token_to_bond),
             "atom_index_maps": {k: list(v) for k, v in self.atom_index_maps.items()},
             "has_ensemble_variability": self.ensemble_std is not None,
+            "has_ligand_to_protein": self.token_residue is not None,
+            "residue_scores_are_informative": self.residue_scores_are_informative,
+            "residue_score_source": (
+                "residue_salience (ligand->protein, summed over ligand tokens)"
+                if self.residue_scores_are_informative
+                else "per_residue (protein->ligand row sums; constant by construction)"
+            ),
         }
 
     def write(self, directory: Path | str) -> dict[str, Path]:
@@ -297,6 +338,10 @@ class IBAMExport:
         }
         if self.ensemble_std is not None:
             arrays["ensemble_std"] = self.ensemble_std
+        if self.token_residue is not None:
+            arrays["token_residue"] = self.token_residue
+        if self.residue_salience is not None:
+            arrays["residue_salience"] = self.residue_salience
         matrices = directory / "ibam_matrices.npz"
         np.savez_compressed(matrices, **arrays)
         metadata = directory / "ibam_metadata.json"
@@ -423,6 +468,24 @@ def export_ibam(
                 f"{residue_token.shape[0]} unmasked residues"
             )
 
+    # The other direction. Its rows are softmax-normalised over *residues*, so
+    # summing over ligand tokens gives a per-residue quantity that varies --
+    # unlike per_residue, which is 1.0 for every residue by construction and so
+    # ranks residues by nothing at all.
+    token_residue = None
+    residue_salience = None
+    if fusion.l2p_attention:
+        l2p = torch.stack(
+            [
+                layer[index][:, ligand_mask][:, :, protein_mask]
+                for layer in fusion.l2p_attention
+            ]
+        )
+        token_residue = _reduce_layers(
+            torch.stack([_reduce_heads(layer, policy) for layer in l2p]), policy
+        )
+        residue_salience = token_residue.sum(dim=0)
+
     ensemble_std = None
     if ensemble_attention is not None and len(ensemble_attention) > 1:
         members = torch.stack(
@@ -455,6 +518,8 @@ def export_ibam(
         num_heads=int(stacked.shape[1]),
         atom_index_maps=dict(ligand_features.atom_index_maps),
         ensemble_std=ensemble_std,
+        token_residue=None if token_residue is None else array(token_residue),
+        residue_salience=None if residue_salience is None else array(residue_salience),
     )
 
 

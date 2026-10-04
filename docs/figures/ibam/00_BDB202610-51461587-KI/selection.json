@@ -1,0 +1,24 @@
+{
+  "aggregation": {
+    "bond_split": "equal",
+    "head_reduction": "mean",
+    "layer_reduction": "last",
+    "renormalize_physical": false
+  },
+  "aggregation_hash": "a69d0443fbd69c13",
+  "checkpoint": "runs\\random_pair-gat-frozen-v1\\best.pt",
+  "measured_endpoint": "Ki",
+  "measured_p_value": 7.221848749616356,
+  "observation_id": "BDB202610-51461587-KI",
+  "predicted": {
+    "IC50": 7.451613903045654,
+    "Kd": 9.087613105773926,
+    "Ki": 7.807676315307617
+  },
+  "seed": 20261001,
+  "select": "diverse",
+  "selection_rule": "the median-potency observation of each of the most-measured distinct targets; one pair per distinct target; sequences of at most 500 residues; drawn from 273,992 observations in the val partition",
+  "sequence_length": 260,
+  "smiles": "N#CCCN(CCc1ccc(S(N)(=O)=O)cc1)C(=O)c1ccc(-c2cssc2=S)cc1",
+  "used_ema_weights": true
+}
