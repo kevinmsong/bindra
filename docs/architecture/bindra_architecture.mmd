@@ -1,0 +1,113 @@
+---
+title: "BINDRA — random_pair-gat-frozen-v1-new (13,815,171 trainable parameters)"
+---
+flowchart TB
+
+%% ============ INPUTS ============
+subgraph IN["INPUTS"]
+  direction LR
+  SEQ["Protein sequence<br/>median 454 aa, max 34,350"]
+  SMI["Ligand SMILES<br/>standardized, InChIKey-keyed"]
+end
+
+%% ============ FROZEN PROTEIN SIDE ============
+subgraph PROT["PROTEIN ENCODER — FROZEN, NOT TRAINED"]
+  ESMC["ESM-C 600M<br/>biohub/ESMC-600M @ fcc9d36f<br/>573,632,640 params · 0 trainable<br/>2,046-residue windows, mean-merged overlap"]
+  CACHE[("Feature cache<br/>14.023 GiB bf16, 44 shards<br/>10,820 constructs<br/>re-encode bit-identical")]
+  ESMC -->|"encode once"| CACHE
+end
+
+%% ============ TRAINED LIGAND SIDE ============
+subgraph LIG["LIGAND ENCODER — GATv2, TRAINED · 3,609,216 params (26.1%)"]
+  FEAT["Molecular graph (RDKit)<br/>78-dim atom · 12-dim bond<br/>bit-identical to legacy layout"]
+  LPROJ["Linear 78 to 384 + LayerNorm"]
+  GAT["6 x GATv2Layer, 8 heads<br/>──────────────<br/>edge-conditioned logits:<br/>a · LeakyReLU(Ws·h_src + Wd·h_dst + We·e)<br/>e = 12 bond feats + self-loop flag<br/>segment softmax over incoming edges<br/>residual + LayerNorm"]
+  READ["Readout: masked mean || max<br/>per molecule"]
+  FEAT --> LPROJ --> GAT
+  GAT --> READ
+end
+
+%% ============ ADAPTERS ============
+subgraph ADPT["SHARED ADAPTERS — one instance, used by every task · 892,800 params (6.5%)"]
+  AP["protein<br/>LN(1152) to Linear to 384 to LN"]
+  AL["ligand tokens<br/>LN(384) to Linear to 384 to LN"]
+  AG["ligand graph<br/>LN(768) to Linear to 384 to LN"]
+end
+
+%% ============ FUSION ============
+subgraph FUSE["BIDIRECTIONAL CROSS-ATTENTION — 2 layers x 8 heads · 7,097,856 params (51.4%)"]
+  direction TB
+  P2L["protein to ligand<br/>Q from residues, K/V from atoms<br/>masked by LIGAND mask<br/>rows sum to 1 over atoms"]
+  L2P["ligand to protein<br/>Q from atoms, K/V from residues<br/>masked by PROTEIN mask<br/>rows sum to 1 over residues"]
+  NOTE["Separate parameters, run in PARALLEL<br/>neither sees the other's output<br/>NOT transposes of each other"]
+  FFP["protein FFN 384-1536-384<br/>+ residual + LayerNorm + re-mask"]
+  FFL["ligand FFN 384-1536-384<br/>+ residual + LayerNorm + re-mask"]
+  P2L --- NOTE --- L2P
+  P2L --> FFP
+  L2P --> FFL
+end
+
+%% ============ POOLING ============
+POOL["MASKED POOLING to pair vector [B, 1536]<br/>──────────────<br/>1. masked mean of fused residues (384)<br/>2. masked mean of fused atoms (384)<br/>3. adapted ligand graph readout (384)<br/>4. masked mean of PRE-fusion protein (384)<br/>#40;4#41; is a path that does not depend on attention finding anything"]
+
+%% ============ HEADS ============
+subgraph HEAD["ENDPOINT HEADS — three INDEPENDENT trunks · 2,215,299 params (16.0%)"]
+  direction LR
+  HKD["pKd<br/>1536-384-384-1"]
+  HKI["pKi<br/>1536-384-384-1"]
+  HIC["pIC50<br/>1536-384-384-1"]
+end
+
+GATHER{{"gather ONLY the measured endpoint<br/>no fabricated zero label exists"}}
+
+%% ============ LOSS ============
+subgraph LOSS["LOSS = exact + 1.0 x censored + 0.25 x auxiliary"]
+  direction TB
+  LEX["EXACT labels<br/>Huber, delta = measured sigma_rep<br/>Kd 0.945 · Ki 0.641 · IC50 0.671<br/>errors inside the noise floor are free"]
+  LCEN["CENSORED labels (16.6%)<br/>one-sided hinge then same Huber<br/>upper b: max(0, pred - b)<br/>lower b: max(0, b - pred)<br/>ZERO cost inside the bound"]
+  LAUX["Tier B / non-primary<br/>weight 0.25, structurally separate<br/>cannot reach the primary term"]
+end
+
+%% ============ IBAM ============
+IBAM["iBAM export<br/>p2l [B,8,L,T] · l2p [B,8,T,L] per layer<br/>kept unaveraged over heads<br/>residue x token (native)<br/>residue x atom (DERIVED aggregation)"]
+
+%% ============ WIRING ============
+SEQ --> ESMC
+SMI --> FEAT
+CACHE -->|"[B, L, 1152] bf16"| AP
+GAT -->|"[B, T, 384] padded + mask"| AL
+READ -->|"[B, 768]"| AG
+
+AP -->|"[B, L, 384]"| P2L
+AP -->|"[B, L, 384]"| L2P
+AL -->|"[B, T, 384]"| P2L
+AL -->|"[B, T, 384]"| L2P
+
+FFP -->|"[B, L, 384]"| POOL
+FFL -->|"[B, T, 384]"| POOL
+AG -->|"[B, 384]"| POOL
+AP -.->|"pre-fusion bypass"| POOL
+
+POOL --> HKD & HKI & HIC
+HKD & HKI & HIC --> GATHER
+GATHER --> LEX & LCEN & LAUX
+P2L -.->|"p2l maps"| IBAM
+L2P -.->|"l2p maps"| IBAM
+
+%% ============ STYLE ============
+classDef frozen fill:#e8eaf0,stroke:#6b7280,stroke-width:2px,color:#111827
+classDef trained fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#0c2a6b
+classDef fusion fill:#ede9fe,stroke:#7c3aed,stroke-width:2px,color:#3b1f78
+classDef lossbox fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#713f12
+classDef gate fill:#fee2e2,stroke:#dc2626,stroke-width:2px,color:#7f1d1d
+classDef note fill:#f8fafc,stroke:#94a3b8,stroke-width:1px,color:#334155,font-style:italic
+classDef io fill:#ffffff,stroke:#334155,stroke-width:2px,color:#0f172a
+
+class ESMC,CACHE frozen
+class FEAT,LPROJ,GAT,READ,AP,AL,AG trained
+class P2L,L2P,FFP,FFL,POOL fusion
+class HKD,HKI,HIC trained
+class LEX,LCEN,LAUX lossbox
+class GATHER gate
+class NOTE,IBAM note
+class SEQ,SMI io
