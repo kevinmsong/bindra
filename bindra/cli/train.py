@@ -93,7 +93,11 @@ def cmd_fit(args) -> int:
     from bindra.features.cache import ProteinFeatureCache
     from bindra.heads.affinity import AffinityHeadConfig
     from bindra.model import BindraConfig, BindraModel
-    from bindra.runtime.device import DeviceRequirement, select_device
+    from bindra.runtime.device import (
+        DeviceRequirement,
+        DeviceSelectionError,
+        select_device,
+    )
     from bindra.training.engine import Trainer, TrainingConfig
     from bindra.training.losses.affinity import noise_floor_table
 
@@ -105,11 +109,18 @@ def cmd_fit(args) -> int:
         print(f"[{FAIL}] no split at {split_directory}; run `bindra make-splits build`")
         return 1
 
-    device = (
-        torch.device(args.device)
-        if args.device
-        else select_device(DeviceRequirement(min_memory_gib=8.0))
-    )
+    # An absent GPU is an ordinary condition here, not a crash: the training
+    # card is external and gets unplugged. select_device already explains which
+    # devices it saw and why it rejected each, so this only stops that
+    # explanation arriving wrapped in a traceback.
+    if args.device:
+        device = torch.device(args.device)
+    else:
+        try:
+            device = select_device(DeviceRequirement(min_memory_gib=8.0))
+        except DeviceSelectionError as exc:
+            print(f"[{FAIL}] {exc}")
+            return 1
     print(f"[{OK}] device {device}", flush=True)
 
     protein_metadata = _protein_metadata(processed)
