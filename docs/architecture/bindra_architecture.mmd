@@ -1,5 +1,5 @@
 ---
-title: "BINDRA — random_pair-gat-frozen-v1-new (13,815,171 trainable parameters)"
+title: "BINDRA — random_pair-gat-frozen-v2-mid (9,254,787 trainable parameters)"
 ---
 flowchart TB
 
@@ -18,44 +18,44 @@ subgraph PROT["PROTEIN ENCODER — FROZEN, NOT TRAINED"]
 end
 
 %% ============ TRAINED LIGAND SIDE ============
-subgraph LIG["LIGAND ENCODER — GATv2, TRAINED · 3,609,216 params (26.1%)"]
+subgraph LIG["LIGAND ENCODER — GATv2, TRAINED · 2,101,120 params (22.7%)"]
   FEAT["Molecular graph (RDKit)<br/>78-dim atom · 12-dim bond<br/>bit-identical to legacy layout"]
-  LPROJ["Linear 78 to 384 + LayerNorm"]
-  GAT["6 x GATv2Layer, 8 heads<br/>──────────────<br/>edge-conditioned logits:<br/>a · LeakyReLU(Ws·h_src + Wd·h_dst + We·e)<br/>e = 12 bond feats + self-loop flag<br/>segment softmax over incoming edges<br/>residual + LayerNorm"]
+  LPROJ["Linear 78 to 320 + LayerNorm"]
+  GAT["5 x GATv2Layer, 8 heads<br/>──────────────<br/>edge-conditioned logits:<br/>a · LeakyReLU(Ws·h_src + Wd·h_dst + We·e)<br/>e = 12 bond feats + self-loop flag<br/>segment softmax over incoming edges<br/>residual + LayerNorm"]
   READ["Readout: masked mean || max<br/>per molecule"]
   FEAT --> LPROJ --> GAT
   GAT --> READ
 end
 
 %% ============ ADAPTERS ============
-subgraph ADPT["SHARED ADAPTERS — one instance, used by every task · 892,800 params (6.5%)"]
-  AP["protein<br/>LN(1152) to Linear to 384 to LN"]
-  AL["ligand tokens<br/>LN(384) to Linear to 384 to LN"]
-  AG["ligand graph<br/>LN(768) to Linear to 384 to LN"]
+subgraph ADPT["SHARED ADAPTERS — one instance, used by every task · 682,944 params (7.4%)"]
+  AP["protein<br/>LN(1152) to Linear to 320 to LN"]
+  AL["ligand tokens<br/>LN(320) to Linear to 320 to LN"]
+  AG["ligand graph<br/>LN(640) to Linear to 320 to LN"]
 end
 
 %% ============ FUSION ============
-subgraph FUSE["BIDIRECTIONAL CROSS-ATTENTION — 2 layers x 8 heads · 7,097,856 params (51.4%)"]
+subgraph FUSE["BIDIRECTIONAL CROSS-ATTENTION — 2 layers x 8 heads, head_dim 40 · 4,931,840 params (53.3%)"]
   direction TB
   P2L["protein to ligand<br/>Q from residues, K/V from atoms<br/>masked by LIGAND mask<br/>rows sum to 1 over atoms"]
   L2P["ligand to protein<br/>Q from atoms, K/V from residues<br/>masked by PROTEIN mask<br/>rows sum to 1 over residues"]
   NOTE["Separate parameters, run in PARALLEL<br/>neither sees the other's output<br/>NOT transposes of each other"]
-  FFP["protein FFN 384-1536-384<br/>+ residual + LayerNorm + re-mask"]
-  FFL["ligand FFN 384-1536-384<br/>+ residual + LayerNorm + re-mask"]
+  FFP["protein FFN 320-1280-320<br/>+ residual + LayerNorm + re-mask"]
+  FFL["ligand FFN 320-1280-320<br/>+ residual + LayerNorm + re-mask"]
   P2L --- NOTE --- L2P
   P2L --> FFP
   L2P --> FFL
 end
 
 %% ============ POOLING ============
-POOL["MASKED POOLING to pair vector [B, 1536]<br/>──────────────<br/>1. masked mean of fused residues (384)<br/>2. masked mean of fused atoms (384)<br/>3. adapted ligand graph readout (384)<br/>4. masked mean of PRE-fusion protein (384)<br/>#40;4#41; is a path that does not depend on attention finding anything"]
+POOL["MASKED POOLING to pair vector [B, 1280]<br/>──────────────<br/>1. masked mean of fused residues #40;320#41;<br/>2. masked mean of fused atoms #40;320#41;<br/>3. adapted ligand graph readout #40;320#41;<br/>4. masked mean of PRE-fusion protein #40;320#41;<br/>#40;4#41; is a path that does not depend on attention finding anything"]
 
 %% ============ HEADS ============
-subgraph HEAD["ENDPOINT HEADS — three INDEPENDENT trunks · 2,215,299 params (16.0%)"]
+subgraph HEAD["ENDPOINT HEADS — three INDEPENDENT trunks · 1,538,883 params (16.6%)"]
   direction LR
-  HKD["pKd<br/>1536-384-384-1"]
-  HKI["pKi<br/>1536-384-384-1"]
-  HIC["pIC50<br/>1536-384-384-1"]
+  HKD["pKd<br/>1280-320-320-1"]
+  HKI["pKi<br/>1280-320-320-1"]
+  HIC["pIC50<br/>1280-320-320-1"]
 end
 
 GATHER{{"gather ONLY the measured endpoint<br/>no fabricated zero label exists"}}
@@ -69,23 +69,23 @@ subgraph LOSS["LOSS = exact + 1.0 x censored + 0.25 x auxiliary"]
 end
 
 %% ============ IBAM ============
-IBAM["iBAM export<br/>p2l [B,8,L,T] · l2p [B,8,T,L] per layer<br/>kept unaveraged over heads<br/>residue x token (native)<br/>residue x atom (DERIVED aggregation)"]
+IBAM["iBAM export<br/>p2l [B,8,L,T] · l2p [B,8,T,L] per layer<br/>kept unaveraged over heads<br/>residue x token #40;native#41;<br/>residue x atom #40;DERIVED aggregation#41;<br/>──────────────<br/>residue ranking uses l2p summed over tokens:<br/>p2l rows are softmax over atoms, so every<br/>residue total is exactly 1 and cannot rank"]
 
 %% ============ WIRING ============
 SEQ --> ESMC
 SMI --> FEAT
 CACHE -->|"[B, L, 1152] bf16"| AP
-GAT -->|"[B, T, 384] padded + mask"| AL
-READ -->|"[B, 768]"| AG
+GAT -->|"[B, T, 320] padded + mask"| AL
+READ -->|"[B, 640]"| AG
 
-AP -->|"[B, L, 384]"| P2L
-AP -->|"[B, L, 384]"| L2P
-AL -->|"[B, T, 384]"| P2L
-AL -->|"[B, T, 384]"| L2P
+AP -->|"[B, L, 320]"| P2L
+AP -->|"[B, L, 320]"| L2P
+AL -->|"[B, T, 320]"| P2L
+AL -->|"[B, T, 320]"| L2P
 
-FFP -->|"[B, L, 384]"| POOL
-FFL -->|"[B, T, 384]"| POOL
-AG -->|"[B, 384]"| POOL
+FFP -->|"[B, L, 320]"| POOL
+FFL -->|"[B, T, 320]"| POOL
+AG -->|"[B, 320]"| POOL
 AP -.->|"pre-fusion bypass"| POOL
 
 POOL --> HKD & HKI & HIC
