@@ -67,7 +67,7 @@ output tensors** that a pure-PyTorch port is then checked against. A port of a
 published architecture that is not numerically verified against its reference
 is a guess, and this environment is what turns that guess into a test.
 
-That job is done. `C:/bindra/oracle/make_reference.py` runs here and dumps the
+That job is done. `tools/kpgt_oracle/make_reference.py` runs here and dumps the
 graph, the weights and ten staged intermediates; `tests/test_kpgt_port.py`
 checks the port against them. Measured agreement, max absolute deviation:
 
@@ -84,11 +84,20 @@ published checkpoint will load unchanged.
 Regenerate with:
 
 ```bash
-/c/bindra/envs/kpgt/Scripts/python.exe C:/bindra/oracle/make_reference.py \
+# KPGT_REF points at a clone of https://github.com/lihan97/KPGT, a separate
+# repository under its own licence, so it is not vendored here. Run from the
+# repository root.
+export KPGT_REF=C:/bindra/kpgt-ref
+/c/bindra/envs/kpgt/Scripts/python.exe tools/kpgt_oracle/make_reference.py \
     C:/bindra/oracle/reference.npz small
-/c/bindra/envs/kpgt/Scripts/python.exe C:/bindra/oracle/make_reference.py \
+/c/bindra/envs/kpgt/Scripts/python.exe tools/kpgt_oracle/make_reference.py \
     C:/bindra/oracle/reference_base.npz base
 ```
+
+A second copy of this script lived at `C:/bindra/oracle/make_reference.py` with
+the reference checkout hardcoded, and these instructions used to point at it.
+The committed script takes `KPGT_REF` and exits with an explanation when the
+clone is missing, so it is the only one to use.
 
 The base artifact is 327 MB, so neither is committed and the tests skip when
 they are absent.

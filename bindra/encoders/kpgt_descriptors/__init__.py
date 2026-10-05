@@ -14,9 +14,9 @@ different version of descriptastorus -- or a differently fitted set -- would fee
 the pretrained encoder inputs it has never seen, with no error and no obvious
 symptom. Pinning the exact code is the only way to keep that honest.
 
-``tests/test_kpgt_descriptors.py`` checks the vendored copy against the original
-running in the CPU-only DGL environment, so "exact" is measured rather than
-asserted.
+``tests/test_ligand_kpgt.py::TestVendoredDescriptors`` checks the vendored copy
+against the original running in the CPU-only DGL environment, so "exact" is
+measured rather than asserted.
 
 ## Changes made to the upstream files
 
@@ -33,9 +33,27 @@ Three, all mechanical, none touching a computed value:
 
 The shims are installed here, before the submodules import, because the broken
 names are read at *module import time*.
+
+## The seventeen unnormalized descriptors
+
+``rdNormalizedDescriptors`` logs one root-logger warning per RDKit descriptor
+that has no fitted CDF in the frozen ``dists.py``, at import time. There are
+seventeen, they are expected, and nothing downstream can act on them -- so as
+warnings they were pure noise, emitted every time anything imported the KPGT
+encoder, and read by nobody.
+
+They are captured here into :data:`UNNORMALIZED_DESCRIPTORS` instead of being
+printed. That keeps the information and makes it testable: the set is a
+property of the installed RDKit crossed with a data file that is pinned, so an
+RDKit upgrade that adds a descriptor changes it. ``TestUnnormalizedDescriptorsArePinnedNotPrinted`` asserts the expected set,
+which turns a warning nobody reads into a failure somebody must look at.
+The capture is scoped to the vendored import and removed in a ``finally``, so
+no other warning is suppressed.
 """
 
 from __future__ import annotations
+
+import logging as _logging
 
 import numpy as _numpy
 import scipy.stats as _stats
@@ -50,12 +68,40 @@ for _name, _builtin in (("bool", bool), ("float", float), ("int", int)):
     if _name not in _numpy.__dict__:  # NumPy >= 1.24; avoids the deprecation hook
         setattr(_numpy, _name, _builtin)
 
-from bindra.encoders.kpgt_descriptors.rdNormalizedDescriptors import (  # noqa: E402
-    RDKit2DNormalized,
-)
+
+class _CaptureUnnormalized(_logging.Filter):
+    """Collect the import-time "No normalization for X" records, emit none."""
+
+    PREFIX = "No normalization for"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.names: list[str] = []
+
+    def filter(self, record: _logging.LogRecord) -> bool:
+        if str(record.msg).startswith(self.PREFIX) and record.args:
+            self.names.append(str(record.args[0]))
+            return False  # swallow it; it is recorded below instead
+        return True
+
+
+_capture = _CaptureUnnormalized()
+_logging.root.addFilter(_capture)
+try:
+    from bindra.encoders.kpgt_descriptors.rdNormalizedDescriptors import (  # noqa: E402
+        RDKit2DNormalized,
+    )
+finally:
+    _logging.root.removeFilter(_capture)
+
+#: RDKit descriptors with no fitted normalization in the pinned ``dists.py``.
+#: They return 0.0 from ``applyNormalizedFunc``, which is upstream behaviour and
+#: is what the pretrained KPGT weights were fitted against -- so this is a fact
+#: to pin, not a defect to fix.
+UNNORMALIZED_DESCRIPTORS: tuple[str, ...] = tuple(_capture.names)
 
 #: Width of the descriptor vector KPGT consumes, excluding the leading
 #: "was it calculable" flag that :meth:`RDKit2DNormalized.process` prepends.
 N_DESCRIPTORS = 200
 
-__all__ = ["N_DESCRIPTORS", "RDKit2DNormalized"]
+__all__ = ["N_DESCRIPTORS", "UNNORMALIZED_DESCRIPTORS", "RDKit2DNormalized"]

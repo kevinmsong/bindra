@@ -166,9 +166,20 @@ class TestNearestNeighbour:
 
         if not torch.cuda.is_available():
             pytest.skip("no CUDA device")
-        from bindra.runtime.device import DeviceRequirement, select_device
+        from bindra.runtime.device import (
+            DeviceRequirement,
+            DeviceSelectionError,
+            select_device,
+        )
 
-        device = str(select_device(DeviceRequirement()))
+        # "CUDA is available" is not "a GPU we can use is available". This machine
+        # has two cards, and when the sm_120 one drops off the bus the sm_75 one
+        # still answers torch.cuda.is_available() -- so without this the suite
+        # reports a red failure for absent hardware rather than a skip.
+        try:
+            device = str(select_device(DeviceRequirement()))
+        except DeviceSelectionError as exc:
+            pytest.skip(f"no suitable GPU: {exc}")
         query, reference = packed[:5], packed[5:]
         on_cpu = nearest_neighbour(query, reference, top_k=2, rescore_top=len(reference))
         on_gpu = nearest_neighbour(

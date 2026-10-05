@@ -29,6 +29,12 @@ data/cache/
 !data/splits/**/*.json
 !data/benchmarks/**/*.json
 
+# iBAM exports: the .npz matrices ARE the artifact of record. bindra/ibam/plots.py
+# is built on the claim that every figure can be re-derived from the file that
+# produced it, so committing the figures while the blanket *.npz rule drops the
+# matrices breaks precisely that guarantee. ~800 KB each, 2.5 MB in all.
+!docs/figures/**/*.npz
+
 # The split ID lists ARE committed too, deliberately, at ~38 MB gzipped. The
 # whole discipline of this project is that the splits are locked and immutable;
 # a split that only exists if you can re-run the builder against an 8.4 GB

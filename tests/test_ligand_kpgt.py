@@ -314,3 +314,77 @@ class TestOnTheBigGpu:
             )
         # Features come back on the CPU, which is what a cache writer wants.
         assert produced[0].token_features.device.type == "cpu"
+
+
+class TestUnnormalizedDescriptorsArePinnedNotPrinted:
+    """The vendored module logs 17 root-logger warnings at import time.
+
+    They are expected, nothing downstream can act on them, and they fired every
+    time anything imported the KPGT encoder -- noise that was read by nobody.
+    Capturing them turns the fact into something a test can hold: the set is a
+    property of the installed RDKit crossed with a pinned data file, so an RDKit
+    upgrade that adds a descriptor changes it and fails here instead of scrolling
+    past in a log.
+    """
+
+    #: Measured against RDKit 2024.3+ and the pinned ``dists.py``.
+    EXPECTED = (
+        "SPS", "BCUT2D_MWHI", "BCUT2D_MWLOW", "BCUT2D_CHGHI", "BCUT2D_CHGLO",
+        "BCUT2D_LOGPHI", "BCUT2D_LOGPLOW", "BCUT2D_MRHI", "BCUT2D_MRLOW",
+        "AvgIpc", "NumAmideBonds", "NumAtomStereoCenters", "NumBridgeheadAtoms",
+        "NumHeterocycles", "NumSpiroAtoms", "NumUnspecifiedAtomStereoCenters",
+        "Phi",
+    )
+
+    def test_the_set_is_exactly_what_was_measured(self):
+        from bindra.encoders.kpgt_descriptors import UNNORMALIZED_DESCRIPTORS
+
+        assert UNNORMALIZED_DESCRIPTORS == self.EXPECTED
+
+    def test_importing_the_package_logs_nothing(self):
+        """Scoped suppression: the import is quiet, other warnings still pass."""
+        import importlib
+        import logging
+
+        import bindra.encoders.kpgt_descriptors as package
+
+        records: list[logging.LogRecord] = []
+
+        class _Collect(logging.Handler):
+            def emit(self, record):
+                records.append(record)
+
+        handler = _Collect()
+        logging.root.addHandler(handler)
+        previous = logging.root.level
+        logging.root.setLevel(logging.DEBUG)
+        try:
+            importlib.reload(package)
+            logging.warning("a warning that must still get through")
+        finally:
+            logging.root.setLevel(previous)
+            logging.root.removeHandler(handler)
+
+        assert not [r for r in records if str(r.msg).startswith("No normalization")]
+        assert any("must still get through" in str(r.msg) for r in records), (
+            "the filter must be removed after the vendored import, not left installed"
+        )
+
+    def test_the_filter_is_not_left_on_the_root_logger(self):
+        import logging
+
+        import bindra.encoders.kpgt_descriptors  # noqa: F401
+
+        assert not [
+            f for f in logging.root.filters
+            if type(f).__name__ == "_CaptureUnnormalized"
+        ]
+
+    def test_an_unnormalized_descriptor_returns_zero(self):
+        """Upstream behaviour, and what the pretrained weights were fitted to."""
+        from bindra.encoders.kpgt_descriptors import rdNormalizedDescriptors
+
+        from rdkit import Chem
+
+        molecule = Chem.MolFromSmiles("CCO")
+        assert rdNormalizedDescriptors.applyNormalizedFunc("Phi", molecule) == 0.0

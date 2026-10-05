@@ -9,11 +9,13 @@ Staged rather than end-to-end on purpose. A single output mismatch tells you
 nothing about where it went wrong, and this port has eleven stages where it
 could.
 
-Regenerating the reference (needed only if the port or the reference changes)::
+Regenerating the reference (needed only if the port or the reference changes),
+from the repository root, with KPGT_REF pointing at a clone of lihan97/KPGT::
 
-    /c/bindra/envs/kpgt/Scripts/python.exe C:/bindra/oracle/make_reference.py \\
+    export KPGT_REF=C:/bindra/kpgt-ref
+    /c/bindra/envs/kpgt/Scripts/python.exe tools/kpgt_oracle/make_reference.py \\
         C:/bindra/oracle/reference.npz small
-    /c/bindra/envs/kpgt/Scripts/python.exe C:/bindra/oracle/make_reference.py \\
+    /c/bindra/envs/kpgt/Scripts/python.exe tools/kpgt_oracle/make_reference.py \\
         C:/bindra/oracle/reference_base.npz base
 
 The base artifact is 327 MB, so neither is committed; tests skip when absent.
