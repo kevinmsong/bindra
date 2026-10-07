@@ -4,3 +4,9 @@
 {"at": "2026-10-02T16:24:29.568782+00:00", "regime": "cold_target_strict", "seed": 20261001, "split_id": "cold_target_strict-20e5bceb"}
 {"at": "2026-10-02T16:25:32.370679+00:00", "regime": "double_cold", "seed": 20261001, "split_id": "double_cold-711031b2"}
 {"at": "2026-10-02T16:29:02.941390+00:00", "regime": "temporal", "seed": 20261001, "split_id": "temporal-3c6f166d"}
+{"at": "2026-10-07T08:24:27.122966+00:00", "regime": "random_pair", "seed": 20261001, "split_id": "random_pair-5ef33512"}
+{"at": "2026-10-07T08:24:53.865868+00:00", "regime": "cold_drug", "seed": 20261001, "split_id": "cold_drug-3d27c22e"}
+{"at": "2026-10-07T08:25:44.748537+00:00", "regime": "cold_target", "seed": 20261001, "split_id": "cold_target-8a9384a3"}
+{"at": "2026-10-07T08:26:12.451477+00:00", "regime": "cold_target_strict", "seed": 20261001, "split_id": "cold_target_strict-7d418473"}
+{"at": "2026-10-07T08:26:54.392277+00:00", "regime": "double_cold", "seed": 20261001, "split_id": "double_cold-92068d7d"}
+{"at": "2026-10-07T08:30:01.240350+00:00", "regime": "temporal", "seed": 20261001, "split_id": "temporal-e2efb208"}

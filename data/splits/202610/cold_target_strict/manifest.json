@@ -3,24 +3,24 @@
     "all_gating_checks_passed": true,
     "balance": {
       "cal": {
-        "censored": 2035,
-        "exact": 12831,
-        "n_observations": 14866
+        "censored": 1935,
+        "exact": 10953,
+        "n_observations": 12888
       },
       "test": {
-        "censored": 3705,
-        "exact": 11161,
-        "n_observations": 14866
+        "censored": 2914,
+        "exact": 9208,
+        "n_observations": 12122
       },
       "train": {
-        "censored": 532818,
-        "exact": 2162503,
-        "n_observations": 2695321
+        "censored": 452942,
+        "exact": 1911703,
+        "n_observations": 2364645
       },
       "val": {
-        "censored": 2512,
-        "exact": 12355,
-        "n_observations": 14867
+        "censored": 2287,
+        "exact": 10787,
+        "n_observations": 13074
       }
     },
     "checks": [
@@ -28,7 +28,7 @@
         "check": "pair_integrity",
         "examples": [],
         "gating": true,
-        "n_checked": 2137647,
+        "n_checked": 1858413,
         "n_violations": 0,
         "passed": true
       },
@@ -36,7 +36,7 @@
         "check": "target_sequence_disjoint",
         "examples": [],
         "gating": true,
-        "n_checked": 10463,
+        "n_checked": 10034,
         "n_violations": 0,
         "passed": true
       },
@@ -45,7 +45,7 @@
         "examples": [],
         "gating": true,
         "identity_threshold": 0.4,
-        "n_checked": 7273133,
+        "n_checked": 6815247,
         "n_never_aligned": 0,
         "n_qualifying_across_partitions": 0,
         "n_violations": 0,
@@ -65,34 +65,37 @@
   },
   "counts": {
     "cal": {
-      "n_ligands": 11936,
-      "n_observations": 14866,
-      "n_pairs": 12325,
-      "n_targets": 243
+      "n_ligands": 10227,
+      "n_observations": 12888,
+      "n_pairs": 10598,
+      "n_targets": 234
     },
     "quarantine": {
-      "n_observations": 0
+      "n_ligands": 192063,
+      "n_observations": 337191,
+      "n_pairs": 287510,
+      "n_targets": 2413
     },
     "test": {
-      "n_ligands": 12229,
-      "n_observations": 14866,
-      "n_pairs": 12583,
-      "n_targets": 253
+      "n_ligands": 9965,
+      "n_observations": 12122,
+      "n_pairs": 10305,
+      "n_targets": 248
     },
     "train": {
-      "n_ligands": 1226666,
-      "n_observations": 2695321,
-      "n_pairs": 2099956,
-      "n_targets": 9734
+      "n_ligands": 1049300,
+      "n_observations": 2364645,
+      "n_pairs": 1826410,
+      "n_targets": 9321
     },
     "val": {
-      "n_ligands": 12465,
-      "n_observations": 14867,
-      "n_pairs": 12783,
-      "n_targets": 233
+      "n_ligands": 10806,
+      "n_observations": 13074,
+      "n_pairs": 11100,
+      "n_targets": 231
     }
   },
-  "created_at": "2026-10-02T16:24:25.546012+00:00",
+  "created_at": "2026-10-07T08:26:08.942373+00:00",
   "fractions": {
     "cal": 0.1,
     "test": 0.1,
@@ -101,24 +104,29 @@
   },
   "id_files": {
     "cal": {
-      "n": 14866,
+      "n": 12888,
       "path": "cal.txt.gz",
-      "sha256": "96626bacbaaa460600dd599cedbf0c6d08bb0dee216afbf91024aa0b1dc118e7"
+      "sha256": "180bfd1751b99dd1eddb938c6a2c650348028d6cef9e5bdd21c23c0f737a755c"
+    },
+    "quarantine": {
+      "n": 337191,
+      "path": "quarantine.txt.gz",
+      "sha256": "0b6dbed641d60adf8ecba34f16d1a9eee54c4c6949eb4900b50431b7ad9e3a46"
     },
     "test": {
-      "n": 14866,
+      "n": 12122,
       "path": "test.txt.gz",
-      "sha256": "2cb9f2e5b39823366eb4de51adabdd873b00bf1babfddca77b55839368b7e59d"
+      "sha256": "6f4b7c7d84edc23d353fd6395f6c6a52cb4ea85c4b4cb14d18364718901086cc"
     },
     "train": {
-      "n": 2695321,
+      "n": 2364645,
       "path": "train.txt.gz",
-      "sha256": "c3fd5fdcc657fe421f3cbcadf60b633b0b0efe4dcdd4334f1eb0c4b39f80c5c1"
+      "sha256": "c63463df131f903eaab124d1e3b31151ca18d07af6701082205bd2d0d58044fd"
     },
     "val": {
-      "n": 14867,
+      "n": 13074,
       "path": "val.txt.gz",
-      "sha256": "a832343e28b55d9d8b3e9d838125250a43f84db2080696d9a6f2673914ef1f79"
+      "sha256": "94abda5108326b6c62ebf719890034d05484106678a70bc9f100bc1e7ddd9e84"
     }
   },
   "inputs": {
@@ -132,10 +140,11 @@
     "protein_coverage_threshold": 0.8,
     "protein_identity_threshold": 0.4,
     "protein_relation_sha256": "2aa3019a68d34f9f9c56009eb9ccc68c1b358f3739cbaccb3d0abffb9fcc7acd",
+    "reserved_panel_observations": 337191,
     "snapshot_release": "202610",
     "source_classes_sha256": "998e1bcdfa365beb4625c806df733e9ac9f489bba75ad90eddf95b45bafa26aa"
   },
-  "manifest_sha256": "26e5f40481b93335a58b23ff19187ea6e666ca717a767d590bb77afc7e45031d",
+  "manifest_sha256": "558bf701d9eb50f47c27710f3ce55ac5d17d3f300fb7ebf92dbcb9920db94955",
   "policy": {
     "assignment": "largest_remainder_weighted_binpack",
     "double_cold_cascade": true,
@@ -147,10 +156,10 @@
   },
   "quarantine": {
     "attrition": {},
-    "n_observations": 0
+    "n_observations": 337191
   },
   "regime": "cold_target_strict",
   "schema_version": "split-v1",
   "seed": 20261001,
-  "split_id": "cold_target_strict-20e5bceb"
+  "split_id": "cold_target_strict-7d418473"
 }

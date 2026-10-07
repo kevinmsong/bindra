@@ -3,24 +3,24 @@
     "all_gating_checks_passed": true,
     "balance": {
       "cal": {
-        "censored": 58912,
-        "exact": 215080,
-        "n_observations": 273992
+        "censored": 48695,
+        "exact": 187022,
+        "n_observations": 235717
       },
       "test": {
-        "censored": 58888,
-        "exact": 215104,
-        "n_observations": 273992
+        "censored": 48716,
+        "exact": 186998,
+        "n_observations": 235714
       },
       "train": {
-        "censored": 364603,
-        "exact": 1553341,
-        "n_observations": 1917944
+        "censored": 314117,
+        "exact": 1381708,
+        "n_observations": 1695825
       },
       "val": {
-        "censored": 58667,
-        "exact": 215325,
-        "n_observations": 273992
+        "censored": 48550,
+        "exact": 186923,
+        "n_observations": 235473
       }
     },
     "checks": [
@@ -28,7 +28,7 @@
         "check": "pair_integrity",
         "examples": [],
         "gating": true,
-        "n_checked": 2137647,
+        "n_checked": 1858413,
         "n_violations": 0,
         "passed": true
       },
@@ -45,34 +45,37 @@
   },
   "counts": {
     "cal": {
-      "n_ligands": 240792,
-      "n_observations": 273992,
-      "n_pairs": 273992,
-      "n_targets": 6689
+      "n_ligands": 206220,
+      "n_observations": 235717,
+      "n_pairs": 235717,
+      "n_targets": 6328
     },
     "quarantine": {
-      "n_observations": 0
+      "n_ligands": 192063,
+      "n_observations": 337191,
+      "n_pairs": 287510,
+      "n_targets": 2413
     },
     "test": {
-      "n_ligands": 241283,
-      "n_observations": 273992,
-      "n_pairs": 273992,
-      "n_targets": 6763
+      "n_ligands": 206592,
+      "n_observations": 235714,
+      "n_pairs": 235714,
+      "n_targets": 6408
     },
     "train": {
-      "n_ligands": 888267,
-      "n_observations": 1917944,
-      "n_pairs": 1315671,
-      "n_targets": 9344
+      "n_ligands": 766146,
+      "n_observations": 1695825,
+      "n_pairs": 1151509,
+      "n_targets": 8937
     },
     "val": {
-      "n_ligands": 240953,
-      "n_observations": 273992,
-      "n_pairs": 273992,
-      "n_targets": 6713
+      "n_ligands": 206097,
+      "n_observations": 235473,
+      "n_pairs": 235473,
+      "n_targets": 6364
     }
   },
-  "created_at": "2026-10-02T16:21:46.469920+00:00",
+  "created_at": "2026-10-07T08:24:22.547289+00:00",
   "fractions": {
     "cal": 0.1,
     "test": 0.1,
@@ -81,24 +84,29 @@
   },
   "id_files": {
     "cal": {
-      "n": 273992,
+      "n": 235717,
       "path": "cal.txt.gz",
-      "sha256": "6e585d76602d79cdd41093d8f7bfebce2f0f808e8bb79f0bdf5e20868b1f142e"
+      "sha256": "72e019f2a5265964e893a0755e6db29703888d1b4c9ab4252d04a9396a709f75"
+    },
+    "quarantine": {
+      "n": 337191,
+      "path": "quarantine.txt.gz",
+      "sha256": "0b6dbed641d60adf8ecba34f16d1a9eee54c4c6949eb4900b50431b7ad9e3a46"
     },
     "test": {
-      "n": 273992,
+      "n": 235714,
       "path": "test.txt.gz",
-      "sha256": "35ce952bee64f5913683a1f8614299fdc2babedf18b700f29846526288510c89"
+      "sha256": "42ab39476e87a68241b0d902e61b0e1aef20139bbe9344d5efb43c4f7b0ebada"
     },
     "train": {
-      "n": 1917944,
+      "n": 1695825,
       "path": "train.txt.gz",
-      "sha256": "ad1994147ac96e0d80d17a95476ba07836ebc43ebc8e71503298b9351f5d52d6"
+      "sha256": "031d9f73284ca0c8a42b28fbfcd4d37f846224927612d9bfedb117696e10d8c9"
     },
     "val": {
-      "n": 273992,
+      "n": 235473,
       "path": "val.txt.gz",
-      "sha256": "6107adaead7e31631cd7b6d0fc08286535522a1324bb29084dbd94cf199946a5"
+      "sha256": "ae623fa7bc45be70b2942d9e781d82a6eb8b137cfdedc4c40ac9feb6cb1106c4"
     }
   },
   "inputs": {
@@ -112,10 +120,11 @@
     "protein_coverage_threshold": 0.8,
     "protein_identity_threshold": 0.4,
     "protein_relation_sha256": "2aa3019a68d34f9f9c56009eb9ccc68c1b358f3739cbaccb3d0abffb9fcc7acd",
+    "reserved_panel_observations": 337191,
     "snapshot_release": "202610",
     "source_classes_sha256": "998e1bcdfa365beb4625c806df733e9ac9f489bba75ad90eddf95b45bafa26aa"
   },
-  "manifest_sha256": "94de5a336e5168308787bcd6cbcb03daefe4518585b5c997088e7863f88b49f4",
+  "manifest_sha256": "d30d488233f6fb9cfea6dbe3d3e7a028677e81862a0c440fc93d7a438ccf9993",
   "policy": {
     "assignment": "largest_remainder_weighted_binpack",
     "double_cold_cascade": true,
@@ -127,10 +136,10 @@
   },
   "quarantine": {
     "attrition": {},
-    "n_observations": 0
+    "n_observations": 337191
   },
   "regime": "random_pair",
   "schema_version": "split-v1",
   "seed": 20261001,
-  "split_id": "random_pair-a109e51b"
+  "split_id": "random_pair-5ef33512"
 }

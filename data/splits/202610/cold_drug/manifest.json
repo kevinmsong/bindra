@@ -3,24 +3,24 @@
     "all_gating_checks_passed": true,
     "balance": {
       "cal": {
-        "censored": 34092,
-        "exact": 147582,
-        "n_observations": 181674
+        "censored": 26829,
+        "exact": 126733,
+        "n_observations": 153562
       },
       "test": {
-        "censored": 70702,
-        "exact": 480244,
-        "n_observations": 550946
+        "censored": 64265,
+        "exact": 430886,
+        "n_observations": 495151
       },
       "train": {
-        "censored": 402248,
-        "exact": 1423378,
-        "n_observations": 1825626
+        "censored": 342162,
+        "exact": 1257850,
+        "n_observations": 1600012
       },
       "val": {
-        "censored": 34028,
-        "exact": 147646,
-        "n_observations": 181674
+        "censored": 26822,
+        "exact": 127182,
+        "n_observations": 154004
       }
     },
     "checks": [
@@ -28,7 +28,7 @@
         "check": "pair_integrity",
         "examples": [],
         "gating": true,
-        "n_checked": 2137647,
+        "n_checked": 1858413,
         "n_violations": 0,
         "passed": true
       },
@@ -36,7 +36,7 @@
         "check": "exact_identity_disjoint",
         "examples": [],
         "gating": true,
-        "n_checked": 1251284,
+        "n_checked": 1068986,
         "n_violations": 0,
         "passed": true
       },
@@ -44,7 +44,7 @@
         "check": "leakage_key_disjoint",
         "examples": [],
         "gating": true,
-        "n_checked": 1168513,
+        "n_checked": 1004400,
         "n_violations": 0,
         "passed": true
       },
@@ -52,7 +52,7 @@
         "check": "scaffold_disjoint",
         "examples": [],
         "gating": true,
-        "n_checked": 422489,
+        "n_checked": 360735,
         "n_violations": 0,
         "passed": true
       },
@@ -69,34 +69,37 @@
   },
   "counts": {
     "cal": {
-      "n_ligands": 127407,
-      "n_observations": 181674,
-      "n_pairs": 164575,
-      "n_targets": 4667
+      "n_ligands": 105995,
+      "n_observations": 153562,
+      "n_pairs": 138567,
+      "n_targets": 4333
     },
     "quarantine": {
-      "n_observations": 0
+      "n_ligands": 192063,
+      "n_observations": 337191,
+      "n_pairs": 287510,
+      "n_targets": 2413
     },
     "test": {
-      "n_ligands": 213659,
-      "n_observations": 550946,
-      "n_pairs": 405299,
-      "n_targets": 6340
+      "n_ligands": 189097,
+      "n_observations": 495151,
+      "n_pairs": 360714,
+      "n_targets": 6091
     },
     "train": {
-      "n_ligands": 782889,
-      "n_observations": 1825626,
-      "n_pairs": 1403403,
-      "n_targets": 9485
+      "n_ligands": 667740,
+      "n_observations": 1600012,
+      "n_pairs": 1220365,
+      "n_targets": 9077
     },
     "val": {
-      "n_ligands": 127329,
-      "n_observations": 181674,
-      "n_pairs": 164370,
-      "n_targets": 4648
+      "n_ligands": 106154,
+      "n_observations": 154004,
+      "n_pairs": 138767,
+      "n_targets": 4312
     }
   },
-  "created_at": "2026-10-02T16:22:25.082896+00:00",
+  "created_at": "2026-10-07T08:24:49.283205+00:00",
   "fractions": {
     "cal": 0.1,
     "test": 0.1,
@@ -105,24 +108,29 @@
   },
   "id_files": {
     "cal": {
-      "n": 181674,
+      "n": 153562,
       "path": "cal.txt.gz",
-      "sha256": "ee311fb65a1972d57b41b2e2b10ee67e5d371faa9355809d60696d83e7dcb6a4"
+      "sha256": "51e65dcc9039616097da7181ffe9d5767f2d8ccfdcf45c92905058ad7468c1db"
+    },
+    "quarantine": {
+      "n": 337191,
+      "path": "quarantine.txt.gz",
+      "sha256": "0b6dbed641d60adf8ecba34f16d1a9eee54c4c6949eb4900b50431b7ad9e3a46"
     },
     "test": {
-      "n": 550946,
+      "n": 495151,
       "path": "test.txt.gz",
-      "sha256": "4fbe8bb4a96e814eae38675bafc62aee9c3862302321ff13b3270f642a4e8946"
+      "sha256": "f189523104ea08a4e5cd8a134f783d04b1376c4c33d5a084f9679bd88a06e7b5"
     },
     "train": {
-      "n": 1825626,
+      "n": 1600012,
       "path": "train.txt.gz",
-      "sha256": "b3c061d6ae9e0bdf5fe2bd0e774a83080f9766f49537b7f80a7b4d0b07ee3ff7"
+      "sha256": "97e35bc8ea4e5df92d15714eb8cb58c604ef021cea6eafdd1dc9ae46b5506ce4"
     },
     "val": {
-      "n": 181674,
+      "n": 154004,
       "path": "val.txt.gz",
-      "sha256": "959aabadd0d9175b3a0ddc7247db9a716eceb9698fcd09556a4d4592690a09df"
+      "sha256": "065c7edbc888c13179a118c9525e66fd28650ecf1ac65af708d41c21ef56198d"
     }
   },
   "inputs": {
@@ -136,10 +144,11 @@
     "protein_coverage_threshold": 0.8,
     "protein_identity_threshold": 0.4,
     "protein_relation_sha256": "2aa3019a68d34f9f9c56009eb9ccc68c1b358f3739cbaccb3d0abffb9fcc7acd",
+    "reserved_panel_observations": 337191,
     "snapshot_release": "202610",
     "source_classes_sha256": "998e1bcdfa365beb4625c806df733e9ac9f489bba75ad90eddf95b45bafa26aa"
   },
-  "manifest_sha256": "3004994b7f266d9b2a771f8120e8e9114b671c8c450aa583e842dce9f46bd54d",
+  "manifest_sha256": "a7a293e67fc0b2b24dfb480f72480a43fb03235fd091973d993304e8f8d63ece",
   "policy": {
     "assignment": "largest_remainder_weighted_binpack",
     "double_cold_cascade": true,
@@ -151,10 +160,10 @@
   },
   "quarantine": {
     "attrition": {},
-    "n_observations": 0
+    "n_observations": 337191
   },
   "regime": "cold_drug",
   "schema_version": "split-v1",
   "seed": 20261001,
-  "split_id": "cold_drug-1685ccb1"
+  "split_id": "cold_drug-3d27c22e"
 }

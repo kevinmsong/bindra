@@ -3,24 +3,24 @@
     "all_gating_checks_passed": true,
     "balance": {
       "cal": {
-        "censored": 3654,
-        "exact": 16663,
-        "n_observations": 20317
+        "censored": 2826,
+        "exact": 13880,
+        "n_observations": 16706
       },
       "test": {
-        "censored": 14964,
-        "exact": 89705,
-        "n_observations": 104669
+        "censored": 13680,
+        "exact": 79870,
+        "n_observations": 93550
       },
       "train": {
-        "censored": 247719,
-        "exact": 877794,
-        "n_observations": 1125513
+        "censored": 212912,
+        "exact": 785715,
+        "n_observations": 998627
       },
       "val": {
-        "censored": 3062,
-        "exact": 15672,
-        "n_observations": 18734
+        "censored": 2590,
+        "exact": 13337,
+        "n_observations": 15927
       }
     },
     "checks": [
@@ -28,7 +28,7 @@
         "check": "pair_integrity",
         "examples": [],
         "gating": true,
-        "n_checked": 958928,
+        "n_checked": 841982,
         "n_violations": 0,
         "passed": true
       },
@@ -36,7 +36,7 @@
         "check": "exact_identity_disjoint",
         "examples": [],
         "gating": true,
-        "n_checked": 579748,
+        "n_checked": 504279,
         "n_violations": 0,
         "passed": true
       },
@@ -44,7 +44,7 @@
         "check": "leakage_key_disjoint",
         "examples": [],
         "gating": true,
-        "n_checked": 541801,
+        "n_checked": 474819,
         "n_violations": 0,
         "passed": true
       },
@@ -52,7 +52,7 @@
         "check": "scaffold_disjoint",
         "examples": [],
         "gating": true,
-        "n_checked": 156857,
+        "n_checked": 137340,
         "n_violations": 0,
         "passed": true
       },
@@ -60,7 +60,7 @@
         "check": "target_sequence_disjoint",
         "examples": [],
         "gating": true,
-        "n_checked": 6828,
+        "n_checked": 6498,
         "n_violations": 0,
         "passed": true
       },
@@ -72,13 +72,13 @@
             0.6
           ],
           "gating": false,
-          "n_cross_partition_pairs_in_band": 10165,
+          "n_cross_partition_pairs_in_band": 8517,
           "note": "Cross-partition construct pairs with identity in [0.4, 0.6). These are the homologues this regime's looser threshold permits to straddle a partition. Reported, not gated: the strict regime exists to bound claims about novel targets, and this number is what the looser regime costs."
         },
         "examples": [],
         "gating": true,
         "identity_threshold": 0.6,
-        "n_checked": 15494243,
+        "n_checked": 13989971,
         "n_never_aligned": 0,
         "n_qualifying_across_partitions": 0,
         "n_violations": 0,
@@ -98,37 +98,37 @@
   },
   "counts": {
     "cal": {
-      "n_ligands": 16977,
-      "n_observations": 20317,
-      "n_pairs": 18292,
-      "n_targets": 721
+      "n_ligands": 13883,
+      "n_observations": 16706,
+      "n_pairs": 14987,
+      "n_targets": 665
     },
     "quarantine": {
-      "n_ligands": 779852,
-      "n_observations": 1470687,
-      "n_pairs": 1178719,
-      "n_targets": 9403
+      "n_ligands": 845873,
+      "n_observations": 1615110,
+      "n_pairs": 1299501,
+      "n_targets": 9484
     },
     "test": {
-      "n_ligands": 60806,
-      "n_observations": 104669,
-      "n_pairs": 82583,
-      "n_targets": 2472
+      "n_ligands": 53493,
+      "n_observations": 93550,
+      "n_pairs": 73133,
+      "n_targets": 2388
     },
     "train": {
-      "n_ligands": 486687,
-      "n_observations": 1125513,
-      "n_pairs": 841099,
-      "n_targets": 2912
+      "n_ligands": 424002,
+      "n_observations": 998627,
+      "n_pairs": 739470,
+      "n_targets": 2763
     },
     "val": {
-      "n_ligands": 15278,
-      "n_observations": 18734,
-      "n_pairs": 16954,
-      "n_targets": 723
+      "n_ligands": 12901,
+      "n_observations": 15927,
+      "n_pairs": 14392,
+      "n_targets": 682
     }
   },
-  "created_at": "2026-10-02T16:25:26.907371+00:00",
+  "created_at": "2026-10-07T08:26:49.876651+00:00",
   "fractions": {
     "cal": 0.1,
     "test": 0.1,
@@ -137,29 +137,29 @@
   },
   "id_files": {
     "cal": {
-      "n": 20317,
+      "n": 16706,
       "path": "cal.txt.gz",
-      "sha256": "3f47cb8497bf9a91e1c625203ed57b6ff84e4bd2210f23fb9ac3f7831c8124bf"
+      "sha256": "5dd51f58097219ec71b51ea9a38e8f25f4e52cc03e84c7cf5d018085d47460a9"
     },
     "quarantine": {
-      "n": 1470687,
+      "n": 1615110,
       "path": "quarantine.txt.gz",
-      "sha256": "722ac4c6c82171f438cdfa6abcf4a8a06933419fee28af9dd4d2402afe11bc70"
+      "sha256": "71312760ab649276a6c0546ead0c0664903d9310147f240d44b60841092a16d5"
     },
     "test": {
-      "n": 104669,
+      "n": 93550,
       "path": "test.txt.gz",
-      "sha256": "cb7e20a474c6dc4eb908bbdc3364dc1211dab0164f96a1b73c6317919a2baa04"
+      "sha256": "7375a866eca2bfa5542b9f44ef6c76018e7c06a016f4dcbb9f2a1aab19698d53"
     },
     "train": {
-      "n": 1125513,
+      "n": 998627,
       "path": "train.txt.gz",
-      "sha256": "02dcd565c8640502e1a0fd5027513d9d5799585caab1179034a443d0db9b8965"
+      "sha256": "75c227be223dddffff4bf04d5ad741e0e23c515e85d5ece439b44cf8fd84b851"
     },
     "val": {
-      "n": 18734,
+      "n": 15927,
       "path": "val.txt.gz",
-      "sha256": "3745f1363fe719b79bee26a9ca233dac1862c8c17ad12b95b71ddcfd9d5d8b68"
+      "sha256": "80e6081d776ba15179c42653ce9bd75d037060b027dfab1fbf41d558be534c66"
     }
   },
   "inputs": {
@@ -173,10 +173,11 @@
     "protein_coverage_threshold": 0.8,
     "protein_identity_threshold": 0.4,
     "protein_relation_sha256": "2aa3019a68d34f9f9c56009eb9ccc68c1b358f3739cbaccb3d0abffb9fcc7acd",
+    "reserved_panel_observations": 337191,
     "snapshot_release": "202610",
     "source_classes_sha256": "998e1bcdfa365beb4625c806df733e9ac9f489bba75ad90eddf95b45bafa26aa"
   },
-  "manifest_sha256": "5d1b583391a32d39b7026da1448f8be659f0de2285f547dd303464379c07004d",
+  "manifest_sha256": "ba124107182e8a2028ee8490f837807bd7d55022792f35258ef62ab6dbfec548",
   "policy": {
     "assignment": "largest_remainder_weighted_binpack",
     "double_cold_cascade": true,
@@ -195,10 +196,10 @@
       "level2_quarantined": 581095,
       "retained": 1269233
     },
-    "n_observations": 1470687
+    "n_observations": 1615110
   },
   "regime": "double_cold",
   "schema_version": "split-v1",
   "seed": 20261001,
-  "split_id": "double_cold-711031b2"
+  "split_id": "double_cold-92068d7d"
 }

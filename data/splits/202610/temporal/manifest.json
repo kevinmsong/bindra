@@ -93,7 +93,7 @@
       "n_targets": 983
     }
   },
-  "created_at": "2026-10-02T16:28:59.188708+00:00",
+  "created_at": "2026-10-07T08:29:57.726243+00:00",
   "fractions": {
     "cal": 0.1,
     "test": 0.1,
@@ -143,10 +143,11 @@
     "protein_coverage_threshold": 0.8,
     "protein_identity_threshold": 0.4,
     "protein_relation_sha256": "2aa3019a68d34f9f9c56009eb9ccc68c1b358f3739cbaccb3d0abffb9fcc7acd",
+    "reserved_panel_observations": 337191,
     "snapshot_release": "202610",
     "source_classes_sha256": "998e1bcdfa365beb4625c806df733e9ac9f489bba75ad90eddf95b45bafa26aa"
   },
-  "manifest_sha256": "1b1909664731622544e56979aee86107ecbb482eb0102290a97e0866a4a99a60",
+  "manifest_sha256": "1e3a94f6d3a755297a203cd9c01d0e040fb37299bf42c42ba6b8ac0d176f4eec",
   "policy": {
     "assignment": "largest_remainder_weighted_binpack",
     "double_cold_cascade": true,
@@ -172,5 +173,5 @@
   "regime": "temporal",
   "schema_version": "split-v1",
   "seed": 20261001,
-  "split_id": "temporal-3c6f166d"
+  "split_id": "temporal-e2efb208"
 }

@@ -31,13 +31,21 @@ parameters)
 | `benchmarked` | Measured on locked, prespecified evaluation panels. |
 | `validated` | Confirmed by **experimental measurement**, not by another model. |
 
-Nothing below is `validated`. Nothing below is `benchmarked`: no model has been
-scored on the locked panels, and [the panels cannot score either run that
-exists](#why-the-locked-panels-cannot-score-these-runs). Two models are
-`trained`, on the `random_pair` regime only, and **the only BINDRA performance
-numbers that exist are on a validation partition of that one regime** — see
-[Trained models and what they measured](#trained-models-and-what-they-measured).
-No number below speaks to held-out ligands, unseen targets, or a future cutoff.
+Nothing below is `validated`. Nothing below is `benchmarked`: no model has ever
+been scored on the locked panels.
+
+**`BINDRA-v1` is not `trained`.** It is built and tested — 959 tests, a verified
+forward and backward pass, every shared module receiving gradient — and it has
+never seen the corpus. The two models that were trained used the GAT arm, which
+no longer exists, so **there is currently no BINDRA performance number that this
+code can reproduce**. The recorded 1.0809 is a historical result from a
+different architecture; see the note above.
+
+Two things must happen before any of that changes, in this order. The splits
+need rebuilding, because every non-temporal regime currently trains on most of
+the sealed panels and the fix is in the code but not yet run. Then a model needs
+training. Until both, every number in this file describes something that either
+cannot be loaded or was measured on splits that are about to change.
 
 ## Priority 0 — environment and legacy preservation
 
@@ -110,11 +118,11 @@ while `cli/evaluate.py` does not.
 | **Cached vs live agreement** | **run-on-corpus** | `bindra cache verify --sample 0.01`: **108/108 re-encoded constructs bit-identical**, not merely within tolerance |
 | **Ligand graph featurization** | **implemented** | `bindra/encoders/ligand_graph.py`, 95 tests; legacy 78-atom/12-bond layout reproduced **bit-identically** against the legacy repository's own executed `smiles_to_graph`, on 22 probe molecules and 400 real curated ones |
 | **Ligand encoder seam** | **implemented** | `bindra/encoders/ligand.py`; `LigandEncoder` protocol + registry, so the fusion stack never names an arm. Segment ops (softmax/sum/mean/max) with overflow and empty-segment behaviour tested |
-| **GAT ligand encoder (ablation 1)** | **implemented** | `bindra/encoders/ligand_gat.py`, 38 tests; GATv2 with edge-conditioned attention, self-loops, per-layer per-head attention exposed. Batch/single equivalence and permutation equivariance asserted; CUDA and CPU agree to 1e-4 |
+| GAT ligand encoder (the specification's ablation 1) | **removed 2026-10-07** | Was `bindra/encoders/ligand_gat.py`, 38 tests, GATv2 with edge-conditioned attention. Deleted on request; `8c8fa7b` is the last commit that can rebuild it. **The specification's ablation 1 is therefore unavailable**, and so is any comparison against the only arm that has ever produced a number here |
 | **KPGT featurization (DGL-free)** | **implemented** | `bindra/encoders/kpgt_graph.py`; triplet graph, 137-dim atom and 14-dim bond vectors, RDKit path fingerprint. Graph structure, every feature column and the edge ordering **bit-identical** to the reference |
 | **LiGhT ported to pure PyTorch** | **implemented** | `bindra/encoders/kpgt_light.py`, 44 tests. Verified against the DGL reference at ten staged intermediates; 4.8e-08 (small) / 6.9e-06 (base, 92M params) end to end. Runs on the RTX 5060 Ti at **1,469 mol/s**, 997 MiB peak |
 | **KPGT descriptors (vendored)** | **implemented** | `bindra/encoders/kpgt_descriptors/`; 4 files from the reference, Apache-2.0, LICENSE carried. Matches the original to **1e-15** on identical column sets. Vendored not depended on: the pretrained weights were fitted against this exact CDF normalization |
-| **KPGT ligand-encoder adapter** | **implemented** | `bindra/encoders/ligand_kpgt.py`, 71 tests with the GAT arm. Registered as `"kpgt"`; emits **bond-level tokens** (2 atoms each) plus 2 knowledge tokens that are non-physical so iBAM will not draw them. `from_pretrained` loads `strict=True` and keys the cache on a content hash |
+| **KPGT ligand-encoder adapter** | **implemented** | `bindra/encoders/ligand_kpgt.py`, 71 tests. Registered as `"kpgt"`; emits **bond-level tokens** (2 atoms each) plus 2 knowledge tokens that are non-physical so iBAM will not draw them. `from_pretrained` loads `strict=True` and keys the cache on a content hash |
 | KPGT **weights** | absent | One manual browser download; figshare is behind a JS challenge. Until then the arm is verified but not pretrained |
 | **Frozen-ligand vector cache** | **implemented** | `bindra/features/ligand_cache.py`, 27 tests with the fine-tuning suite. Fixed-width bf16, sharded, resumable, encoder identity in the key. Refuses to cache a trainable encoder. Unused in the chosen regime, and kept because `n_trainable_layers=0` is a supported configuration |
 | **KPGT partial fine-tuning** | **implemented** | Last layer unfrozen by default; embeddings and lower layers stay frozen so the representation does not move out from under them. Gradient reach asserted exactly |
@@ -241,7 +249,15 @@ any later result can mean. Full detail in [`CURATION_REPORT.md`](CURATION_REPORT
   `cliff_kind` is therefore a prespecified diagnostic category, and cliff metrics
   must be reported per kind rather than pooled.
 
-## Split and panel sizes, as built
+## Split and panel sizes
+
+**These are the splits currently on disk, and they are the ones that let a
+non-temporal regime train on the benchmark.** `make-splits build` now reserves
+the 337,191 sealed-panel observations into quarantine for every non-temporal
+regime, but **the rebuild has not been run**, so the table below is still what a
+training run would read today.
+
+### As currently built — pre-reservation
 
 | Regime | train | val | cal | test | quarantine |
 |---|---|---|---|---|---|
@@ -251,6 +267,30 @@ any later result can mean. Full detail in [`CURATION_REPORT.md`](CURATION_REPORT
 | cold_target_strict (40%) | 2,695,321 | 14,867 | 14,866 | **14,866** | 0 |
 | double_cold | 1,125,513 | 18,734 | 20,317 | 104,669 | 1,470,687 |
 | temporal | 2,170,213 | 48,723 | 59,095 | 227,514 | 198,748 + 35,627 repeated |
+
+### After `make-splits build --overwrite` — computed, not yet executed
+
+Reservation is a deterministic post-pass over the assignment above: every
+observation belonging to one of the three affinity panels moves to quarantine,
+whichever partition it was in. So these are arithmetic over the current id files
+rather than a projection, and the rebuild should reproduce them exactly. If it
+does not, the discrepancy is the finding.
+
+| Regime | train | val | cal | test | quarantine |
+|---|---|---|---|---|---|
+| random_pair | 1,695,825 | 235,473 | 235,717 | 235,714 | 337,191 |
+| cold_drug | 1,600,012 | 154,004 | 153,562 | 495,151 | 337,191 |
+| cold_target (60%) | 1,692,259 | 237,693 | 240,769 | 232,008 | 337,191 |
+| cold_target_strict (40%) | 2,364,645 | 13,074 | 12,888 | 12,122 | 337,191 |
+| double_cold | 998,627 | 15,927 | 16,706 | 93,550 | 1,615,110 |
+| temporal | unchanged — its test partition *is* the panel | | | | |
+
+Training sets lose 11-12%. `cold_target_strict` keeps only 12,122 test
+observations, which was already its defining weakness and is now slightly
+worse; the regime exists to bound claims about novel targets, not to measure
+much. **Every `split_id` and manifest hash changes**, so anything trained
+against the pre-reservation splits is not comparable to anything trained after.
+Nothing has been, which is why this was done now.
 
 | Panel | Size |
 |---|---|
@@ -561,58 +601,13 @@ defined for a cutoff this model never respected.
 
 ## Decisions still pending
 
-- **Retiring the GAT arm is deferred until `base.pth` is downloaded**
-  (decided 2026-10-06). Removing it was considered and held, for three reasons
-  worth keeping so the question is not reopened from scratch:
+- **Retiring the GAT arm: decided, and done.** Deferral was recorded on
+  2026-10-06 against three objections — it orphans the only trained checkpoint,
+  a weightless KPGT is worse than a small fully-trainable GAT, and the
+  specification names GAT as ablation 1. The removal was then requested anyway
+  on 2026-10-07 and carried out; the objections stand unresolved rather than
+  having been answered. `v2-mid` is unloadable, and ablation 1 no longer exists.
 
-  1. `random_pair-v2-mid`'s state dict is `ligand_encoder.input_projection.*`
-     and `cli/evaluate.py::_load_model` rebuilds it through `GATConfig`.
-     Deleting the class orphans the only trained checkpoint and makes every
-     number in this ledger unreproducible.
-  2. Without the published weights, a KPGT run is 7,087,872 trainable
-     parameters on top of ~84.8M frozen **at random initialisation** — fitting
-     a head to a fixed random projection, which is worse than the small but
-     fully trainable GAT arm. Training all 12 blocks instead would learn, at
-     ~2.46 h/epoch, while forfeiting the pretrained representation that is the
-     reason to prefer KPGT at all.
-  3. The specification names the legacy GAT as **ablation 1**, so it is a
-     required comparison rather than a fallback.
-
-  The seam already delivers what removal would: `--ligand-arm kpgt` selects the
-  arm and nothing downstream names either one. Once the weights land this
-  becomes a clean one-pass change.
-
-- **ESM-C stays frozen. Decided 2026-10-07, after an attempt.**
-
-  The cost of unfreezing is structural, not a flag: `BindraModel` contains no
-  ESM-C at all — it takes `[B, L, 1152]` cached tensors — so there is no last
-  layer in the trained model to unfreeze. Making it real needs the model to own
-  the encoder, `PairBatch` to carry sequences instead of cached features, and
-  target-grouped batching, because `assert_cacheable` correctly refuses to serve
-  a trainable encoder and every batch would then run ESM-C live: **~43 h/epoch**
-  by the arithmetic below.
-
-  **A cheaper route was built and does not work.** Cache the states entering the
-  last block instead of the final ones, leaving blocks 0–34 frozen and therefore
-  still a deterministic function of the sequence, and run only the tail
-  (15,933,312 parameters: the last of 36 blocks plus the final norm) live. One
-  block forward per protein per step rather than thirty-six.
-
-  Reverted, because the reconstruction does not reproduce the encoder it claims
-  to extend. Running the real tail on captured states and comparing against
-  `encode()` leaves **max 3.8e-3 against a mean feature magnitude of 0.021** —
-  18% relative, where this port's standard is 1e-6. What was ruled out, so it is
-  not re-checked: the encoder is deterministic (repeat calls agree to exactly
-  0.0), the model is in eval mode, dtype is float32 on both sides, and the
-  block's `sequence_id` is genuinely `None`. One real cause *was* found and
-  fixed — stripping special tokens before re-running the block changes what its
-  attention sees, worth 0.123 of the original 0.126 error. The remaining 3.8e-3
-  is unexplained; the likely candidate is a step between blocks that
-  `transformer.blocks` does not capture.
-
-  A tail that does not reproduce the frozen stack would silently invalidate all
-  14.023 GiB of cached features, which is why this was not shipped behind a
-  flag. See commit `48edfb4` and its revert for the code.
 
 - **Both encoders fine-tune their last layer.** Defaults are
   `KPGTConfig.n_trainable_layers = 1` and
@@ -693,8 +688,9 @@ defined for a cutoff this model never respected.
   | Quantity | Measured |
   |---|---|
   | Featurization | **308 mol/s** single core (3.25 ms/mol) → 78 min for 1,436,561 molecules on one core |
-  | GAT forward, batch 1024 | **9,189 mol/s** on the 5060 Ti, peak 652 MiB → 5.0 min per epoch over 2,739,920 observations |
-  | GAT forward, batch 256 | 3,207 mol/s → 14.2 min per epoch |
+  | GAT forward, batch 1024 *(arm since removed)* | **9,189 mol/s** on the 5060 Ti, peak 652 MiB → 5.0 min per epoch over 2,739,920 observations |
+  | GAT forward, batch 256 *(arm since removed)* | 3,207 mol/s → 14.2 min per epoch |
+  | **LiGhT-mini forward** | **unmeasured** — the ~200 descriptors/molecule are this arm's dominant cost and no smoke run has been done |
   | Cached graphs, naive float32 | **17.44 GiB** projected |
 
   Token states are *not* cacheable here: the ligand encoder is trained, so its
@@ -730,16 +726,17 @@ defined for a cutoff this model never respected.
   a model with far more parameters, says nothing about generalisation, and must
   never be quoted as a result. It is superseded as evidence of training by the
   completed runs, and is retained only as the wiring check it was.
-- The GAT arm is the only ligand encoder any result came from. KPGT is now a
-  real arm — wired into `BindraModel`, fed by the batch pipeline, descriptor
-  input included — but **the published weights are still not downloaded**, so
-  constructing it gives randomly initialised KPGT and **no claim about KPGT
-  performance is supported**. The port is verified for numerical equivalence
-  only, which says nothing about accuracy. Nothing has been trained with it: a
-  frozen untrained arm is refused outright by `bindra train`, and an unfrozen
-  one would be learning from a random initialisation. The arm in use is recorded
-  in `EncoderMetadata.name`, in `BindraConfig.to_dict()["ligand_arm"]` and in
-  every cache key.
+- **BINDRA-v1 has not been trained at all.** Every number in this ledger came
+  from the GAT arm, which no longer exists. There is no baseline to beat: the
+  recorded 1.0809 belongs to a different arm, a different pair vector and a
+  different fusion width, and nothing in BINDRA-v1 is comparable to it. The
+  first run establishes a new baseline rather than improving on an old one.
+- **LiGhT-mini is not KPGT**, and `base.pth` is still not downloaded. It keeps
+  the architecture and the knowledge inputs; the knowledge-guided pre-training
+  the acronym names is exactly what is absent. It reports as
+  `ligand_light_mini` in `EncoderMetadata.name`, in
+  `BindraConfig.to_dict()["ligand_arm"]` and in every cache key, so no results
+  table can read as a KPGT result.
 - The attention maps the fusion stack retains are **not** contact predictions.
   `FusionOutput.contact_map` is a derived aggregation of two differently-oriented
   distributions; its rows do not sum to 1 and it has been compared to no
