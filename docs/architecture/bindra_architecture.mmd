@@ -71,6 +71,8 @@ end
 
 GATHER{{"gather ONLY the measured endpoint<br/>no fabricated zero label exists"}}
 
+LOCK{{"BENCHMARK LOCK — bindra evaluate --panels<br/>──────────────<br/>refuses a checkpoint whose training set overlaps<br/>the sealed panels, measured against the split's own<br/>id files rather than assumed from the regime name<br/>random_pair 60.2% / 100.0% / 67.7%<br/>cold_target 66.4% / 68.8% / 67.6%<br/>temporal 0% — the only regime the panels can score<br/>──────────────<br/>opening them writes to an access log and cannot<br/>be undone, so the default is refusal"}}
+
 subgraph LOSS["LOSS = exact + 1.0 x censored + 0.25 x auxiliary"]
   direction LR
   LEX["EXACT · Huber, delta = measured sigma_rep<br/>Kd 0.945 · Ki 0.641 · IC50 0.671<br/>error inside the noise floor is free"]
@@ -134,6 +136,7 @@ AP -.->|"pre-fusion bypass"| POOL
 POOL --> HKD & HKI & HIC
 HKD & HKI & HIC --> GATHER
 GATHER --> LEX & LCEN & LAUX
+GATHER -.->|"a finished checkpoint"| LOCK
 P2L -.-> IBAM
 L2P -.-> IBAM
 
@@ -173,7 +176,7 @@ class ESMC,CACHE frozen
 class AP,AL,AG trained
 class KFEAT,KLIGHT,KREAD trained
 class BUILD,CONTRACT seam
-class DROP,GATHER gate
+class DROP,GATHER,LOCK gate
 class P2L,L2P,FFP,FFL,POOL fusion
 class HKD,HKI,HIC trained
 class LEX,LCEN,LAUX lossbox

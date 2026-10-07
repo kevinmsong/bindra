@@ -537,6 +537,20 @@ Measured by observation id against `random_pair`'s own train ids:
 | panel_repeated_measurement | 35,627 | **100.0%** |
 | panel_reimport_control | 75,819 | **67.7%** |
 
+`bindra evaluate --panels` now **refuses** a contaminated checkpoint rather than
+relying on anyone remembering this. The overlap is measured against the split's
+own id files, not assumed from the regime name, and the guard reports the share
+before declining; `--i-mean-it` overrides it deliberately. Measured:
+
+| regime trained on | strict_future | repeated_measurement | reimport_control |
+|---|---|---|---|
+| `random_pair` | 60.2% | 100.0% | 67.7% |
+| `cold_target` | 66.4% | 68.8% | 67.6% |
+| **`temporal`** | **0%** | **0%** | **0%** |
+
+`temporal` is the only regime that can score the panels, which makes a temporal
+run the single step between "has numbers" and "has results".
+
 So `bindra evaluate --panels` was **not** run against either model, and should
 not be. It would produce a contaminated number and the cost is irreversible: the
 call opens sealed labels and writes to each panel's access log, which cannot be
@@ -567,6 +581,38 @@ defined for a cutoff this model never respected.
   The seam already delivers what removal would: `--ligand-arm kpgt` selects the
   arm and nothing downstream names either one. Once the weights land this
   becomes a clean one-pass change.
+
+- **ESM-C stays frozen. Decided 2026-10-07, after an attempt.**
+
+  The cost of unfreezing is structural, not a flag: `BindraModel` contains no
+  ESM-C at all — it takes `[B, L, 1152]` cached tensors — so there is no last
+  layer in the trained model to unfreeze. Making it real needs the model to own
+  the encoder, `PairBatch` to carry sequences instead of cached features, and
+  target-grouped batching, because `assert_cacheable` correctly refuses to serve
+  a trainable encoder and every batch would then run ESM-C live: **~43 h/epoch**
+  by the arithmetic below.
+
+  **A cheaper route was built and does not work.** Cache the states entering the
+  last block instead of the final ones, leaving blocks 0–34 frozen and therefore
+  still a deterministic function of the sequence, and run only the tail
+  (15,933,312 parameters: the last of 36 blocks plus the final norm) live. One
+  block forward per protein per step rather than thirty-six.
+
+  Reverted, because the reconstruction does not reproduce the encoder it claims
+  to extend. Running the real tail on captured states and comparing against
+  `encode()` leaves **max 3.8e-3 against a mean feature magnitude of 0.021** —
+  18% relative, where this port's standard is 1e-6. What was ruled out, so it is
+  not re-checked: the encoder is deterministic (repeat calls agree to exactly
+  0.0), the model is in eval mode, dtype is float32 on both sides, and the
+  block's `sequence_id` is genuinely `None`. One real cause *was* found and
+  fixed — stripping special tokens before re-running the block changes what its
+  attention sees, worth 0.123 of the original 0.126 error. The remaining 3.8e-3
+  is unexplained; the likely candidate is a step between blocks that
+  `transformer.blocks` does not capture.
+
+  A tail that does not reproduce the frozen stack would silently invalidate all
+  14.023 GiB of cached features, which is why this was not shipped behind a
+  flag. See commit `48edfb4` and its revert for the code.
 
 - **Both encoders fine-tune their last layer.** Defaults are
   `KPGTConfig.n_trainable_layers = 1` and

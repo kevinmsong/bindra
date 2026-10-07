@@ -55,6 +55,46 @@ UNSCORED_PANELS = {
 }
 
 
+def _panel_contamination(args, trained_on: str | None) -> dict[str, float]:
+    """Share of each affinity panel that is in this regime's TRAINING set.
+
+    Measured against the split's own id files rather than assumed from the
+    regime name, because the question is empirical and the answer decides
+    whether a one-way door gets opened. A temporally-trained model returns
+    nothing; ``random_pair`` overlapped the three panels by 60.2%, 100.0% and
+    67.7% when this was first measured.
+    """
+    import gzip
+
+    if not trained_on or trained_on == "temporal":
+        return {}
+    ids_path = Path(args.splits) / trained_on / "ids" / "train.txt.gz"
+    if not ids_path.exists():
+        return {}
+    try:
+        import pandas as pd
+
+        with gzip.open(ids_path, "rt") as handle:
+            train_ids = {line.strip() for line in handle if line.strip()}
+        overlap: dict[str, float] = {}
+        for name in AFFINITY_PANELS:
+            queries = Path(args.benchmarks) / name / "queries.parquet"
+            if not queries.exists():
+                continue
+            frame = pd.read_parquet(queries)
+            column = next(
+                (c for c in frame.columns if "observation" in c.lower()), frame.columns[0]
+            )
+            panel_ids = set(frame[column].astype(str))
+            if panel_ids:
+                share = len(panel_ids & train_ids) / len(panel_ids)
+                if share > 0:
+                    overlap[name] = share
+        return overlap
+    except Exception:  # noqa: BLE001 - a guard that crashes must not block scoring
+        return {}
+
+
 def _load_model(checkpoint: Path, device):
     """Rebuild the model from the config stored in its own checkpoint."""
     import torch
