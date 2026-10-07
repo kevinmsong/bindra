@@ -335,8 +335,15 @@ class LiGhT(nn.Module):
         valid = (path_indices >= 0).to(torch.int32)
         lengths = valid.sum(dim=-1)
         path_feats = self.path_len_emb(lengths).clone()
-        path_feats[batch.virtual_path] = self.virtual_path_emb.weight
-        path_feats[batch.self_loop] = self.self_loop_emb.weight
+        # Defensive ``.to(dtype)``: an Embedding lookup is not autocast-eligible
+        # today, so these three are all fp32 and the casts are no-ops. They are
+        # here so that an autocast policy change, or a caller that hands in a
+        # half-precision tensor, cannot reintroduce the index-put dtype crash
+        # that AtomEmbedding hit on the first real bf16 batch.
+        path_feats[batch.virtual_path] = self.virtual_path_emb.weight.to(
+            path_feats.dtype
+        )
+        path_feats[batch.self_loop] = self.self_loop_emb.weight.to(path_feats.dtype)
         return path_feats
 
     def _init_path(self, triplet_h: torch.Tensor, path_indices: torch.Tensor) -> torch.Tensor:
@@ -399,7 +406,17 @@ class AtomEmbedding(nn.Module):
     def forward(self, pair_node_feats: torch.Tensor, indicators: torch.Tensor) -> torch.Tensor:
         pair_node_h = self.in_proj(pair_node_feats).clone()
         # An unbonded atom's absent partner gets a learned embedding in slot 1.
-        pair_node_h[indicators == VIRTUAL_ATOM_INDICATOR, 1, :] = self.virtual_atom_emb.weight
+        #
+        # ``.to(dtype)`` is for autocast, and it is a no-op in fp32 so the
+        # verification against the DGL reference is unaffected. Autocast casts
+        # *operations*, not parameter reads: ``in_proj`` is a Linear and comes
+        # back bf16, while this Embedding's weight stays fp32, and an index-put
+        # across dtypes raises. It only fires for a molecule with an unbonded
+        # atom, so it survived every fp32 test and crashed on the first real
+        # batch containing a salt.
+        pair_node_h[indicators == VIRTUAL_ATOM_INDICATOR, 1, :] = (
+            self.virtual_atom_emb.weight.to(pair_node_h.dtype)
+        )
         return self.input_dropout(pair_node_h).sum(dim=-2)
 
 
@@ -417,7 +434,10 @@ class BondEmbedding(nn.Module):
         # reference quirk: only virtual *atoms* (-1) get the learned bond
         # embedding. Knowledge nodes (>=1) carry placeholder -1 features that are
         # pushed through the linear layer as if they were a real bond.
-        edge_h[indicators == VIRTUAL_ATOM_INDICATOR] = self.virutal_bond_emb.weight
+        # ``.to(dtype)`` for autocast, as in AtomEmbedding above; no-op in fp32.
+        edge_h[indicators == VIRTUAL_ATOM_INDICATOR] = self.virutal_bond_emb.weight.to(
+            edge_h.dtype
+        )
         return self.input_dropout(edge_h)
 
 
