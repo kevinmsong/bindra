@@ -59,7 +59,7 @@ def _load_model(checkpoint: Path, device):
     """Rebuild the model from the config stored in its own checkpoint."""
     import torch
 
-    from bindra.encoders.ligand_gat import GATConfig
+    from bindra.encoders.ligand_kpgt import KPGTConfig
     from bindra.heads.affinity import AffinityHeadConfig
     from bindra.model import BindraConfig, BindraModel
 
@@ -69,14 +69,22 @@ def _load_model(checkpoint: Path, device):
     config = BindraConfig(
         protein_dim=stored.get("protein_dim", 1152),
         model_dim=stored.get("model_dim", 256),
-        ligand=GATConfig(
-            hidden_dim=ligand.get("hidden_dim", 256),
-            num_layers=ligand.get("num_layers", 4),
-            num_heads=ligand.get("num_heads", 8),
+        ligand=KPGTConfig.mini(
+            d_g_feats=ligand.get("d_g_feats", 128),
+            n_mol_layers=ligand.get("n_mol_layers", 4),
+            n_trainable_layers=ligand.get("n_mol_layers", 4),
+            n_heads=ligand.get("n_heads", 8),
+            d_hpath_ratio=ligand.get("d_hpath_ratio", 4),
         ),
         cross_attention_layers=stored.get("cross_attention_layers", 2),
         cross_attention_heads=stored.get("cross_attention_heads", 8),
         dropout=stored.get("dropout", 0.1),
+        # Both default to what the model was *before* these became options, not
+        # to today's defaults. A checkpoint written before either existed holds
+        # neither key, and rebuilding it under the current defaults would give a
+        # different pair_dim and a state dict that will not load.
+        feedforward_multiplier=stored.get("feedforward_multiplier", 4),
+        split_graph_readout=stored.get("split_graph_readout", False),
         head=AffinityHeadConfig(hidden_dim=stored.get("model_dim", 256)),
     )
     model = BindraModel(config)

@@ -26,7 +26,7 @@ import torch
 from torch import nn
 
 from bindra.data.batching import BatchingPolicy, PairBatch
-from bindra.encoders.ligand_graph import collate_graphs, featurize_molecule
+from bindra.encoders.ligand_kpgt_arm import KPGTLigandBatch
 from bindra.heads.affinity import ENDPOINT_INDEX
 from bindra.training.engine import (
     EpochReport,
@@ -49,7 +49,7 @@ def _batch(size: int = 4, length: int = 7, *, seed: int = 0) -> PairBatch:
     return PairBatch(
         protein_features=torch.randn(size, length, PROTEIN_DIM, generator=generator),
         protein_mask=torch.ones(size, length, dtype=torch.bool),
-        ligands=collate_graphs([featurize_molecule(s) for s in smiles]),
+        ligands=KPGTLigandBatch.from_smiles(list(smiles)),
         targets=AffinityTargets(
             endpoint_index=torch.tensor([ENDPOINT_INDEX["Ki"]] * size),
             p_value=torch.linspace(5.0, 9.0, size),
@@ -90,7 +90,7 @@ class _FakeLoader:
 
 
 def _model():
-    from bindra.encoders.ligand_gat import GATConfig
+    from bindra.encoders.ligand_kpgt import KPGTConfig
     from bindra.heads.affinity import AffinityHeadConfig
     from bindra.model import BindraConfig, BindraModel
 
@@ -98,7 +98,7 @@ def _model():
     return BindraModel(
         BindraConfig(
             protein_dim=PROTEIN_DIM,
-            ligand=GATConfig(hidden_dim=16, num_layers=1, num_heads=2, dropout=0.0),
+            ligand=KPGTConfig.mini(d_g_feats=16, n_mol_layers=1, n_trainable_layers=1, n_heads=2, d_hpath_ratio=2),
             model_dim=16,
             cross_attention_layers=1,
             cross_attention_heads=2,

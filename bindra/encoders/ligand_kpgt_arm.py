@@ -215,6 +215,12 @@ class KPGTLigandArmModule(nn.Module):
         return self.config.graph_dim
 
     @property
+    def graph_components(self) -> tuple[int, ...]:
+        """Fingerprint node, descriptor node, mean of the rest — three equal parts."""
+        width = self.config.d_g_feats
+        return (width, width, width)
+
+    @property
     def n_trainable(self) -> int:
         return sum(p.numel() for p in self.module.parameters() if p.requires_grad)
 
@@ -286,7 +292,16 @@ class KPGTLigandArmModule(nn.Module):
     def encode_for_fusion(
         self, batch: KPGTLigandBatch, *, return_attention: bool = False
     ) -> FusionTokens:
-        """Physical triplet tokens, densified, plus the three-part readout.
+        """Every triplet token, densified, plus the three-part readout.
+
+        **Knowledge nodes stay on the token axis.** They are real tokens that
+        the protein may attend to, and they are flagged non-physical so iBAM
+        never paints a fingerprint onto a molecule. Dropping them before fusion
+        was the earlier behaviour; it solved the drawing problem at the cost of
+        the protein's only *conditional* path to whole-molecule properties,
+        leaving a static concatenated block as the sole route. Set
+        ``KPGTConfig.knowledge_tokens_in_fusion = False`` to restore the drop,
+        which is the ablation that tells you whether this mattered.
 
         ``return_attention`` is accepted for interface parity and ignored: LiGhT
         does not expose its per-layer attention through this port, and returning
@@ -308,21 +323,39 @@ class KPGTLigandArmModule(nn.Module):
             batch.graphs, batch.fingerprints, batch.descriptors
         )
 
-        # vavn: 0 real bond/atom, -1 virtual atom, >=1 knowledge node. The
-        # readout already folded the knowledge nodes in; the token axis must not
-        # carry them.
-        physical = batch.graphs.vavn <= 0
+        # vavn: 0 real bond/atom, -1 virtual atom, >=1 knowledge node.
+        is_physical = batch.graphs.vavn <= 0
+        keep = (
+            torch.ones_like(is_physical)
+            if self.config.knowledge_tokens_in_fusion
+            else is_physical
+        )
         destination, width = physical_token_destination(
-            batch.graphs.graph_index[physical], batch.graphs.num_graphs
+            batch.graphs.graph_index[keep], batch.graphs.num_graphs
         )
         tokens, mask = pad_by_destination(
-            triplet_states[physical],
+            triplet_states[keep],
             destination,
             num_graphs=batch.graphs.num_graphs,
             width=width,
         )
+        physical_mask = None
+        if self.config.knowledge_tokens_in_fusion:
+            # Same scatter, carrying the physical flag instead of the states, so
+            # the two masks cannot disagree about which slot holds what.
+            flags, _ = pad_by_destination(
+                is_physical[keep].unsqueeze(-1).to(tokens.dtype),
+                destination,
+                num_graphs=batch.graphs.num_graphs,
+                width=width,
+            )
+            physical_mask = flags.squeeze(-1) > 0
         return FusionTokens(
-            tokens=tokens, token_mask=mask, graph_states=readout, attention=()
+            tokens=tokens,
+            token_mask=mask,
+            graph_states=readout,
+            physical_mask=physical_mask,
+            attention=(),
         )
 
 

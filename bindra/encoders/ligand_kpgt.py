@@ -192,6 +192,15 @@ class KPGTConfig:
     #: *reconstructed* them is gone.
     from_scratch: bool = False
 
+    #: Let the protein cross-attend to the two knowledge nodes.
+    #:
+    #: They are flagged non-physical, so iBAM still refuses to draw them. The
+    #: alternative -- dropping them before fusion -- leaves the static
+    #: ``graph_states`` block as the only route for whole-molecule properties,
+    #: with no way for attention to weigh them differently per residue. Set
+    #: False to restore that drop; the pair is the ablation.
+    knowledge_tokens_in_fusion: bool = True
+
     def __post_init__(self) -> None:
         if not 0 <= self.n_trainable_layers <= self.n_mol_layers:
             raise ValueError(
@@ -239,7 +248,7 @@ class KPGTConfig:
         2.2M one, matched to a baseline that works, is.
         """
         defaults = dict(
-            d_g_feats=192,
+            d_g_feats=128,
             n_mol_layers=4,
             n_heads=8,
             d_hpath_ratio=4,
@@ -298,6 +307,15 @@ class KPGTConfig:
     def graph_dim(self) -> int:
         """Fingerprint node, descriptor node and the mean of the rest."""
         return 3 * self.d_g_feats
+
+    @property
+    def graph_components(self) -> tuple[int, ...]:
+        """Those three parts, as widths. Mirrored on the arm module.
+
+        Declared on the config as well because ``BindraConfig`` sizes its
+        adapters before any module exists.
+        """
+        return (self.d_g_feats, self.d_g_feats, self.d_g_feats)
 
 
 class KPGTLigandEncoder:

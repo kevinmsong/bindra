@@ -1,5 +1,5 @@
 ---
-title: "BINDRA — two ligand arms behind one contract · trained: random_pair-gat-frozen-v2-mid (9,254,787 params)"
+title: "BINDRA-v1 — 2,669,811 trainable · one ligand arm (LiGhT-mini) · dotted = PLANNED, NOT BUILT"
 config:
   flowchart:
     wrappingWidth: 420
@@ -8,7 +8,7 @@ config:
 ---
 flowchart TB
 
-%% Solid = the trained v2-mid path. Dashed = built and tested, never trained.
+%% Solid = built and tested. Dotted + pencil = planned, no code exists.
 
 subgraph IN["INPUTS"]
   direction LR
@@ -22,65 +22,51 @@ subgraph PROT["PROTEIN ENCODER — FROZEN"]
   ESMC -->|"encode once"| CACHE
 end
 
-subgraph LIGSEAM["LIGAND ARM — ONE CONTRACT, TWO IMPLEMENTATIONS"]
+subgraph LIGSEAM["LIGAND ARM — LiGhT-mini · 1,032,560 params #40;38.7%#41;"]
   direction LR
-  BUILD["LigandBatchBuilder<br/>carries the arm NAME, so it and its<br/>featurizer pickle for the process pool<br/>72% of the batch build, GIL-bound in RDKit<br/>only SMILES cross; the ~144 MiB protein<br/>tensor never does"]
+  BUILD["LigandBatchBuilder<br/>carries the arm NAME, so it and its featurizer<br/>pickle for the process pool<br/>72% of the batch build, GIL-bound in RDKit<br/>only SMILES cross; the ~144 MiB protein tensor never does"]
 
-  subgraph ARMGAT["GATv2 — TRAINED · 2,101,120 params"]
-    direction TB
-    FEAT["Atom graph · 78-dim atom, 12-dim bond<br/>bit-identical to legacy layout"]
-    GAT["5 x GATv2Layer, 8 heads, dim 320<br/>edge-conditioned logits, self-loop flag<br/>segment softmax over incoming edges"]
-    READ["mean || max → 640"]
-    FEAT --> GAT --> READ
-  end
-
-  subgraph ARMLIGHT["LiGhT-mini — BUILT AND TESTED, NEVER TRAINED · 2,232,352 params"]
+  subgraph ARMLIGHT["LiGhT — trained FROM SCRATCH, no pre-training"]
     direction TB
     KFEAT["Line graph + knowledge inputs<br/>137-dim atom, 14-dim bond<br/>512-bit fingerprint, 200 descriptors<br/>descriptors dominate; computed in the pool"]
-    KLIGHT["LiGhT triplet transformer, pure PyTorch<br/>6.9e-06 vs the DGL reference<br/>dim 192, 4 layers, 8 heads<br/>──────────────<br/>trains EVERY weight from scratch:<br/>embeddings and attention biases included,<br/>which no partial-unfreeze setting reaches"]
-    KREAD["fp || md || mean → 576"]
-    DROP{{"knowledge nodes dropped<br/>from the token axis<br/>a fingerprint with a row in the<br/>attention map cannot be drawn on<br/>a molecule. Kept in the readout.<br/>Virtual-atom triplets are KEPT"}}
+    KLIGHT["LiGhT triplet transformer, pure PyTorch<br/>6.9e-06 vs the DGL reference<br/>dim 128, 4 layers, 8 heads<br/>every weight trains: embeddings and attention<br/>biases included, which no partial unfreeze reaches"]
+    KREAD["readout: fp ++ md ++ mean → 384"]
     KFEAT --> KLIGHT --> KREAD
-    KLIGHT --> DROP
   end
 
-  CONTRACT["FusionTokens — the seam<br/>tokens [B, T, token_dim] + mask · graph_states [B, graph_dim]<br/>──────────────<br/>each arm pads its OWN tokens: only the arm<br/>knows which are real<br/>GAT 1 token = 1 atom · 320 / 640<br/>LiGhT 1 token = 1 BOND · 192 / 576"]
+  CONTRACT["FusionTokens — the seam<br/>tokens [B, T, 128] + token_mask + PHYSICAL_MASK<br/>graph_states [B, 384]<br/>──────────────<br/>1 token = 1 BOND, or 1 unbonded atom,<br/>or a knowledge node<br/>knowledge nodes ATTEND but are not physical:<br/>two masks, because 'may attention see this'<br/>and 'may iBAM draw this' are different questions"]
 
-  BUILD --> ARMGAT
-  BUILD -.-> ARMLIGHT
-  READ --> CONTRACT
-  GAT --> CONTRACT
-  KREAD -.-> CONTRACT
-  DROP -.-> CONTRACT
+  BUILD --> ARMLIGHT
+  KLIGHT --> CONTRACT
+  KREAD --> CONTRACT
 end
 
-subgraph ADPT["SHARED ADAPTERS — one instance, every task"]
+subgraph ADPT["SHARED ADAPTERS — one instance, every task · 271,968 params"]
   direction LR
-  AP["protein<br/>LN#40;1152#41; → 320"]
-  AL["ligand tokens<br/>LN#40;token_dim#41; → 320"]
-  AG["ligand graph<br/>LN#40;graph_dim#41; → 320"]
-  WIDTH["Widths READ OFF the arm's config —<br/>nothing downstream names an arm<br/>GAT 682,944 · LiGhT-mini 621,120"]
+  AP["protein<br/>LN#40;1152#41; → 160"]
+  AL["ligand tokens<br/>LN#40;128#41; → 160"]
+  AG["ligand graph — ONE PROJECTION PER PART<br/>fp → 160 · md → 160 · mean → 160<br/>the readout is three things; compressing all<br/>of it into one block was the bottleneck"]
 end
 
-subgraph FUSE["BIDIRECTIONAL CROSS-ATTENTION — 2 layers x 8 heads · 4,931,840 params"]
+subgraph FUSE["BIDIRECTIONAL CROSS-ATTENTION — 2 layers x 8 heads, FFN x2 · 826,240 params #40;30.9%#41;"]
   direction TB
   P2L["protein → ligand<br/>Q residues, K/V tokens<br/>masked by LIGAND mask"]
   L2P["ligand → protein<br/>Q tokens, K/V residues<br/>masked by PROTEIN mask"]
   NOTE["Separate parameters, run in PARALLEL<br/>NOT transposes of each other"]
-  FFP["protein FFN 320-1280-320<br/>+ residual + LN + re-mask"]
-  FFL["ligand FFN 320-1280-320<br/>+ residual + LN + re-mask"]
+  FFP["protein FFN 160-320-160<br/>+ residual + LN + re-mask"]
+  FFL["ligand FFN 160-320-160<br/>+ residual + LN + re-mask"]
   P2L --- NOTE --- L2P
   P2L --> FFP
   L2P --> FFL
 end
 
-POOL["MASKED POOLING → [B, 1280]<br/>fused residues ++ fused tokens ++ ligand graph<br/>++ PRE-fusion protein mean<br/>the last is a path that does not depend on<br/>attention having found anything"]
+POOL["MASKED POOLING → [B, 960] — SIX blocks<br/>fused residues ++ fused tokens ++ PRE-fusion protein<br/>++ fp ++ md ++ mean<br/>the pre-fusion block is a path that does not depend<br/>on attention having found anything"]
 
-subgraph HEAD["ENDPOINT HEADS — three INDEPENDENT trunks · 1,538,883 params"]
+subgraph HEAD["ENDPOINT HEADS — three INDEPENDENT trunks · 539,043 params"]
   direction LR
-  HKD["pKd<br/>1280-320-320-1"]
-  HKI["pKi<br/>1280-320-320-1"]
-  HIC["pIC50<br/>1280-320-320-1"]
+  HKD["pKd<br/>960-160-160-1"]
+  HKI["pKi<br/>960-160-160-1"]
+  HIC["pIC50<br/>960-160-160-1"]
 end
 
 GATHER{{"gather ONLY the measured endpoint<br/>no fabricated zero label exists"}}
@@ -92,7 +78,42 @@ subgraph LOSS["LOSS = exact + 1.0 x censored + 0.25 x auxiliary"]
   LAUX["Tier B · weight 0.25<br/>structurally cannot reach<br/>the primary term"]
 end
 
-IBAM["iBAM export · p2l [B,8,L,T] · l2p [B,8,T,L] per layer<br/>unaveraged over heads · residue x token native,<br/>residue x atom DERIVED<br/>──────────────<br/>ranking uses l2p: p2l rows are softmax over tokens,<br/>so every residue total is 1 and cannot rank<br/>a LiGhT column is a BOND, not a triplet index"]
+IBAM["iBAM export · p2l [B,8,L,T] · l2p [B,8,T,L] per layer<br/>unaveraged over heads · residue x token native,<br/>residue x atom DERIVED<br/>──────────────<br/>ranking uses l2p: p2l rows are softmax over tokens,<br/>so every residue total is 1 and cannot rank<br/>a column is a BOND; knowledge columns are flagged<br/>non-physical and are never drawn"]
+
+LEGEND["LEGEND — solid: built and tested, not yet trained<br/>DOTTED + ✎: PLANNED, NOT BUILT — no code exists; shapes are from the spec"]
+
+%% ============ PLANNED: RETRIEVAL #40;Priority 2#41; ============
+subgraph PRET["✎ RETRIEVAL — PLANNED, NOT BUILT"]
+  direction TB
+  RPROJ["Dual-encoder retrieval heads<br/>──────────────<br/>off the UNCONDITIONED adapters, so each side is<br/>computable without the other member of a pair.<br/>**Never index pair-conditioned cross-attention<br/>embeddings** — they do not exist for a lone ligand"]
+  RANN[("Versioned ANN index<br/>ligand vectors · endpoint-aware query")]
+  RMODE["target fishing: rank a library for a target<br/>analog fishing: seed + neighbourhood filter<br/>#40;Morgan / scaffold#41;, seed and duplicates excluded"]
+  RRANK["shortlist → RERANK with the full cross-attention model<br/>#40;re-enters the trained stack above; drawn as text, not an<br/>edge, because it is a loop#41;<br/>report ANN-approximation and shortlist losses separately"]
+  RPROJ --> RANN --> RMODE --> RRANK
+end
+
+%% ============ PLANNED: DIFFUSION #40;Priority 3#41; ============
+subgraph PDIFF["✎ ANALOG GENERATION — PLANNED, NOT BUILT"]
+  direction TB
+  DCOND["Conditioning: seed SMILES + scaffold policy from the caller ·<br/>target residues + endpoint · seed ligand<br/>representations · shared cross-attention features ·<br/>iBAM-derived edit context · preserved scaffold with<br/>atom mapping · optional requested affinity change"]
+  DDEN["DiGress-style DISCRETE 2D graph diffusion<br/>categorical forward noising + reverse sampler<br/>denoiser predicts editable atom/bond categories<br/>from the noisy graph, timestep and conditions<br/>scaffold identities and stereochemistry held FIXED"]
+  DDEC["Explicit RDKit decode → sanitize → verify scaffold<br/>by atom mapping → canonical isomeric SMILES<br/>validity reported BEFORE and after any repair"]
+  DSCORE["re-encode candidates, score with the affinity ensemble<br/>#40;candidates re-enter the ligand arm above — also a loop#41;<br/>predicted improvement is a SELECTION HYPOTHESIS"]
+  DNO{{"never condition on the clean product's<br/>representation: it is unavailable at inference<br/>and is a reconstruction shortcut<br/>──────────────<br/>discrete sampling and RDKit conversion are<br/>NOT differentiable — the gradient path stops here"}}
+  DCOND --> DDEN --> DDEC --> DSCORE
+  DDEN --- DNO
+end
+
+%% ============ PLANNED: UNCERTAINTY #40;Priority 4#41; ============
+subgraph PUNC["✎ CALIBRATED UNCERTAINTY — PLANNED, NOT BUILT"]
+  direction TB
+  UENS["3 INDEPENDENTLY trained models<br/>#40;different init and data-order seeds, same partitions#41;<br/>three dropout passes are not three models<br/>report mean and SD in p-units"]
+  UCONF["split conformal on a SEPARATE calibration partition<br/>q = kth smallest |y - mean| · 90% intervals per endpoint<br/>insufficient-calibration status rather than a made-up interval"]
+  UDOM["applicability domain: similarity vs TRAINING entities only<br/>OOD flag reported independently of ensemble spread<br/>no coverage guarantee on a novel target"]
+  UENS --> UCONF --> UDOM
+end
+
+PLOSS["✎ PLANNED JOINT OBJECTIVE — NOT BUILT<br/>L_total = L_affinity + λ_rank·L_within_assay_ranking<br/>+ λ_retrieval + λ_diffusion + λ_delta·L_measured_analog_delta<br/>+ λ_consistency<br/>──────────────<br/>only L_affinity exists today. Warm up affinity before raising<br/>auxiliary weights; no term may consume test or calibration labels"]
 
 SEQ --> ESMC
 SMI --> BUILD
@@ -116,6 +137,23 @@ GATHER --> LEX & LCEN & LAUX
 P2L -.-> IBAM
 L2P -.-> IBAM
 
+%% --- planned wiring. Dotted throughout: none of this exists. ---
+%% Retrieval reads the UNCONDITIONED adapters, never the fused stream.
+AP -.-> RPROJ
+AL -.-> RPROJ
+AG -.-> RPROJ
+
+%% Generation is conditioned by the fused pair and by iBAM, per Upgrade A.
+FFP -.-> DCOND
+FFL -.-> DCOND
+IBAM -.->|"edit context"| DCOND
+
+%% Uncertainty wraps the trained predictor rather than sitting inside it.
+GATHER -.-> UENS
+LEX -.-> PLOSS
+RRANK -.-> PLOSS
+DDEN -.-> PLOSS
+
 classDef frozen fill:#e8eaf0,stroke:#6b7280,stroke-width:2px,color:#111827
 classDef trained fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#0c2a6b
 classDef untrained fill:#f1f5f9,stroke:#64748b,stroke-width:2px,stroke-dasharray:6 4,color:#334155
@@ -125,10 +163,15 @@ classDef lossbox fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#713f12
 classDef gate fill:#fee2e2,stroke:#dc2626,stroke-width:2px,color:#7f1d1d
 classDef note fill:#f8fafc,stroke:#94a3b8,stroke-width:1px,color:#334155,font-style:italic
 classDef io fill:#ffffff,stroke:#334155,stroke-width:2px,color:#0f172a
+%% Planned work: dotted border, washed out, and prefixed with a pencil. No code
+%% exists for any of it; these shapes come from the specification.
+classDef planned fill:#fdf4ff,stroke:#a21caf,stroke-width:2px,stroke-dasharray:2 4,color:#701a75
+classDef plannedgate fill:#fff1f2,stroke:#be123c,stroke-width:2px,stroke-dasharray:2 4,color:#881337
+classDef legend fill:#ffffff,stroke:#0f172a,stroke-width:2px,color:#0f172a
 
 class ESMC,CACHE frozen
-class FEAT,GAT,READ,AP,AL,AG trained
-class KFEAT,KLIGHT,KREAD untrained
+class AP,AL,AG trained
+class KFEAT,KLIGHT,KREAD trained
 class BUILD,CONTRACT seam
 class DROP,GATHER gate
 class P2L,L2P,FFP,FFL,POOL fusion
@@ -136,3 +179,6 @@ class HKD,HKI,HIC trained
 class LEX,LCEN,LAUX lossbox
 class NOTE,IBAM,WIDTH note
 class SEQ,SMI io
+class RPROJ,RANN,RMODE,RRANK,DCOND,DDEN,DDEC,DSCORE,UENS,UCONF,UDOM,PLOSS planned
+class DNO plannedgate
+class LEGEND legend

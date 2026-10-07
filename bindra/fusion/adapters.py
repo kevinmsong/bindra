@@ -49,6 +49,21 @@ class AdapterConfig:
     #: A bottleneck narrower than ``model_dim`` keeps the adapter small relative
     #: to the frozen encoder it sits on. ``None`` means a single linear map.
     bottleneck_dim: int | None = None
+    #: Widths of the graph readout's parts, in order, summing to
+    #: ``ligand_graph_dim``. Each gets its own projection and its own block of
+    #: the pair vector.
+    #:
+    #: ``None`` keeps the old behaviour: one projection over the whole
+    #: concatenation into one block. That was a real bottleneck for a readout
+    #: built from distinct things -- for LiGhT, a fingerprint node, a descriptor
+    #: node and a mean, two thirds of it knowledge, all compressed into a single
+    #: ``model_dim`` block beside three others.
+    graph_components: tuple[int, ...] | None = None
+
+    @property
+    def graph_blocks(self) -> int:
+        """How many ``model_dim`` blocks the graph readout contributes."""
+        return 1 if self.graph_components is None else len(self.graph_components)
 
     def __post_init__(self) -> None:
         for name in ("protein_dim", "ligand_dim", "ligand_graph_dim", "model_dim"):
@@ -56,6 +71,16 @@ class AdapterConfig:
                 raise AdapterError(f"{name} must be >= 1, got {getattr(self, name)}")
         if self.bottleneck_dim is not None and self.bottleneck_dim < 1:
             raise AdapterError(f"bottleneck_dim must be >= 1, got {self.bottleneck_dim}")
+        if self.graph_components is not None:
+            if not self.graph_components:
+                raise AdapterError("graph_components must not be empty; use None")
+            total = sum(self.graph_components)
+            if total != self.ligand_graph_dim:
+                raise AdapterError(
+                    f"graph_components sum to {total} but ligand_graph_dim is "
+                    f"{self.ligand_graph_dim}; a split that does not cover the "
+                    "readout would silently drop or duplicate part of it"
+                )
 
     @classmethod
     def from_encoders(
@@ -143,7 +168,18 @@ class SharedAdapters(nn.Module):
         self.config = config
         self.protein = FeatureAdapter(config.protein_dim, config)
         self.ligand = FeatureAdapter(config.ligand_dim, config)
-        self.ligand_graph = FeatureAdapter(config.ligand_graph_dim, config)
+        # One adapter per readout part when the arm declares a split, so each
+        # part reaches the pair vector at full model width instead of sharing a
+        # single compressed block. `ligand_graph` keeps its name for the
+        # unsplit case, because trained checkpoints hold that key.
+        if config.graph_components is None:
+            self.ligand_graph = FeatureAdapter(config.ligand_graph_dim, config)
+            self.ligand_graph_parts = None
+        else:
+            self.ligand_graph = None  # type: ignore[assignment]
+            self.ligand_graph_parts = nn.ModuleList(
+                FeatureAdapter(width, config) for width in config.graph_components
+            )
 
     @property
     def model_dim(self) -> int:
@@ -161,8 +197,24 @@ class SharedAdapters(nn.Module):
             "ligand": self.ligand(ligand_features),
         }
         if ligand_graph_features is not None:
-            result["ligand_graph"] = self.ligand_graph(ligand_graph_features)
+            result["ligand_graph"] = self._adapt_graph(ligand_graph_features)
         return result
+
+    def _adapt_graph(self, features: torch.Tensor) -> torch.Tensor:
+        """``[B, graph_blocks * model_dim]``, split by component when declared."""
+        if self.ligand_graph_parts is None:
+            return self.ligand_graph(features)
+        widths = self.config.graph_components or ()
+        if features.shape[-1] != sum(widths):
+            raise AdapterError(
+                f"graph readout is {features.shape[-1]} wide but the declared "
+                f"components sum to {sum(widths)}"
+            )
+        pieces = torch.split(features, list(widths), dim=-1)
+        return torch.cat(
+            [adapter(piece) for adapter, piece in zip(self.ligand_graph_parts, pieces)],
+            dim=-1,
+        )
 
 
 def masked_mean(

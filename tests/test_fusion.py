@@ -75,7 +75,7 @@ class TestAdapterConfig:
             feature_schema_version="v1",
         )
         ligand = EncoderMetadata(
-            name="ligand_gat", checkpoint="untrained", output_dim=256,
+            name="ligand_light_mini", checkpoint="untrained", output_dim=256,
             precision="float32", feature_schema_version="v1",
             extra={"graph_dim": 512},
         )
@@ -100,16 +100,19 @@ class TestAdapterConfig:
 
     def test_the_real_encoders_configure_without_hardcoding(self):
         """Against the encoders actually in use, not invented metadata."""
-        from bindra.encoders.ligand_gat import GATConfig, GATLigandEncoder
+        from bindra.encoders.ligand_kpgt import KPGTConfig, KPGTLigandEncoder
 
-        encoder = GATLigandEncoder(GATConfig(hidden_dim=32, num_heads=4))
+        encoder = KPGTLigandEncoder(
+            KPGTConfig.mini(d_g_feats=32, n_mol_layers=1, n_trainable_layers=1,
+                            n_heads=4, d_hpath_ratio=2)
+        )
         protein = EncoderMetadata(
             name="esmc", checkpoint="x", output_dim=1152, precision="float32",
             feature_schema_version="v1",
         )
         built = AdapterConfig.from_encoders(protein, encoder.metadata())
         assert built.ligand_dim == 32
-        assert built.ligand_graph_dim == 64  # mean+max readout
+        assert built.ligand_graph_dim == 96  # fp ++ md ++ mean readout
 
     @pytest.mark.parametrize("field", ["protein_dim", "ligand_dim", "model_dim"])
     def test_a_nonpositive_width_is_refused(self, field):

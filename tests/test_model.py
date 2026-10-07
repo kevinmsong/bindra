@@ -29,8 +29,8 @@ import pytest
 import torch
 from rdkit import Chem
 
-from bindra.encoders.ligand_gat import GATConfig
-from bindra.encoders.ligand_graph import collate_graphs, featurize_molecule
+from bindra.encoders.ligand_kpgt import KPGTConfig
+from bindra.encoders.ligand_kpgt_arm import KPGTLigandBatch
 from bindra.features.types import EncoderMetadata
 from bindra.fusion.adapters import assert_shared, attribute_gradients
 from bindra.heads.affinity import AffinityHeadConfig, ENDPOINT_INDEX
@@ -38,7 +38,6 @@ from bindra.model import (
     BindraConfig,
     BindraModel,
     BindraModelError,
-    pad_token_states,
 )
 from bindra.training.losses.affinity import (
     AffinityTargets,
@@ -63,7 +62,7 @@ MOLECULES = (
 def _config(**kwargs) -> BindraConfig:
     defaults = dict(
         protein_dim=PROTEIN_DIM,
-        ligand=GATConfig(hidden_dim=32, num_layers=2, num_heads=4, dropout=0.0),
+        ligand=KPGTConfig.mini(d_g_feats=32, n_mol_layers=2, n_trainable_layers=2, n_heads=4, d_hpath_ratio=2),
         model_dim=32,
         cross_attention_layers=1,
         cross_attention_heads=4,
@@ -89,23 +88,6 @@ def _proteins(count: int, length: int = 9, seed: int = 0):
     return features, torch.ones(count, length, dtype=torch.bool)
 
 
-class TestPadTokenStates:
-    def test_states_are_placed_at_their_own_rows(self):
-        graphs = [featurize_molecule(s) for s in ("CCO", "c1ccccc1", "C")]
-        batch = collate_graphs(graphs)
-        states = torch.arange(batch.total_atoms * 2, dtype=torch.float32).reshape(-1, 2)
-        padded, mask = pad_token_states(states, batch)
-        assert padded.shape == (3, 6, 2)
-        assert mask.sum(dim=1).tolist() == [3, 6, 1]
-        assert torch.equal(padded[0, :3], states[:3])
-        assert torch.equal(padded[2, :1], states[9:10])
-
-    def test_padding_rows_are_zero_and_masked_out(self):
-        batch = collate_graphs([featurize_molecule("C"), featurize_molecule("c1ccccc1")])
-        padded, mask = pad_token_states(torch.ones(7, 4), batch)
-        assert padded[0, 1:].abs().sum() == 0.0
-        assert not mask[0, 1:].any()
-
 
 class TestConstruction:
     def test_the_protein_width_comes_from_the_cache_metadata(self):
@@ -115,18 +97,18 @@ class TestConstruction:
             feature_schema_version="v1",
         )
         built = BindraModel.from_protein_metadata(
-            metadata, model_dim=32, cross_attention_heads=4, ligand=GATConfig(hidden_dim=32, num_heads=4)
+            metadata, model_dim=32, cross_attention_heads=4, ligand=KPGTConfig.mini(d_g_feats=32, n_mol_layers=2, n_trainable_layers=2, n_heads=4, d_hpath_ratio=2)
         )
         assert built.config.protein_dim == 1152
 
-    def test_the_pair_representation_is_four_blocks_wide(self):
+    def test_the_pair_representation_counts_its_blocks(self):
         config = _config(model_dim=64)
-        assert config.pair_dim == 256
+        assert config.pair_dim == (3 + config.adapter_config().graph_blocks) * 64
 
     def test_the_adapter_width_cannot_disagree_with_the_ligand_encoder(self):
-        config = _config(ligand=GATConfig(hidden_dim=64, num_heads=8, num_layers=1))
+        config = _config(ligand=KPGTConfig.mini(d_g_feats=64, n_mol_layers=1, n_trainable_layers=1, n_heads=8, d_hpath_ratio=2))
         assert config.adapter_config().ligand_dim == 64
-        assert config.adapter_config().ligand_graph_dim == 128
+        assert config.adapter_config().ligand_graph_dim == 3 * 64
 
 
 class TestForward:
@@ -139,10 +121,12 @@ class TestForward:
 
     def test_attention_is_retained_for_ibam(self, model):
         features, mask = _proteins(2)
-        batch = collate_graphs([featurize_molecule(s) for s in MOLECULES[:2]])
+        batch = KPGTLigandBatch.from_smiles(list(MOLECULES[:2]))
         out = model(features, mask, batch, return_ligand_attention=True,
                     need_attention=True)
-        assert len(out.ligand_attention) == model.config.ligand.num_layers
+        # LiGhT does not expose per-layer attention through this port.
+        assert out.ligand_attention == ()
+        assert len(out.fusion.p2l_attention) == model.config.cross_attention_layers
         assert len(out.fusion.p2l_attention) == 1
         # Unaveraged over heads.
         assert out.fusion.p2l_attention[0].shape[1] == model.config.cross_attention_heads
@@ -163,7 +147,7 @@ class TestForward:
     def test_a_float_protein_mask_is_refused(self, model):
         with pytest.raises(BindraModelError, match="True = real residue"):
             model(torch.randn(2, 9, PROTEIN_DIM), torch.ones(2, 9),
-                  collate_graphs([featurize_molecule(s) for s in MOLECULES[:2]]))
+                  KPGTLigandBatch.from_smiles(list(MOLECULES[:2])))
 
     def test_output_is_finite_for_a_single_atom_molecule(self, model):
         features, mask = _proteins(1)
@@ -199,11 +183,11 @@ class TestForward:
         order = [3, 0, 7, 1, 11, 2, 9, 4, 12, 5, 10, 6, 8]
         features, mask = _proteins(1, seed=5)
         original = model(
-            features, mask, collate_graphs([featurize_molecule(mol)])
+            features, mask, KPGTLigandBatch.from_smiles([Chem.MolToSmiles(mol)])
         ).prediction.values
         renumbered = model(
             features, mask,
-            collate_graphs([featurize_molecule(Chem.RenumberAtoms(mol, order))]),
+            KPGTLigandBatch.from_smiles([Chem.MolToSmiles(Chem.RenumberAtoms(mol, order))]),
         ).prediction.values
         assert torch.allclose(original, renumbered, atol=1e-5)
 
@@ -278,13 +262,11 @@ class TestTinyDataOverfit:
 
     def test_the_model_overfits_eight_pairs(self):
         torch.manual_seed(20261001)
-        model = BindraModel(_config(model_dim=64, ligand=GATConfig(
-            hidden_dim=64, num_layers=2, num_heads=4, dropout=0.0
-        )))
+        model = BindraModel(_config(model_dim=64, ligand=KPGTConfig.mini(d_g_feats=64, n_mol_layers=2, n_trainable_layers=2, n_heads=4, d_hpath_ratio=2)))
         model.train()
 
         features, mask = _proteins(len(MOLECULES), seed=17)
-        graphs = collate_graphs([featurize_molecule(s) for s in MOLECULES])
+        graphs = KPGTLigandBatch.from_smiles(list(MOLECULES))
         # Distinct labels, spread over the real corpus range, and spread over all
         # three endpoints so no single head can carry the task alone.
         p_values = torch.tensor([4.5, 9.5, 6.0, 11.0, 3.0, 8.0, 7.0, 10.0])
@@ -337,14 +319,12 @@ class TestTinyDataOverfit:
         against the *same* protein would get the same prediction.
         """
         torch.manual_seed(5)
-        model = BindraModel(_config(model_dim=64, ligand=GATConfig(
-            hidden_dim=64, num_layers=2, num_heads=4, dropout=0.0
-        )))
+        model = BindraModel(_config(model_dim=64, ligand=KPGTConfig.mini(d_g_feats=64, n_mol_layers=2, n_trainable_layers=2, n_heads=4, d_hpath_ratio=2)))
         model.train()
         one_protein = torch.randn(1, 9, PROTEIN_DIM).repeat(4, 1, 1)
         mask = torch.ones(4, 9, dtype=torch.bool)
         smiles = ["CCO", "c1ccccc1", "CC(=O)O", "C"]
-        graphs = collate_graphs([featurize_molecule(s) for s in smiles])
+        graphs = KPGTLigandBatch.from_smiles(list(smiles))
         targets = AffinityTargets(
             endpoint_index=torch.zeros(4, dtype=torch.long),
             p_value=torch.tensor([4.0, 7.0, 9.0, 11.0]),
@@ -366,12 +346,10 @@ class TestTinyDataOverfit:
     def test_censored_rows_can_also_be_satisfied(self):
         """A censored batch must be learnable, not merely non-crashing."""
         torch.manual_seed(11)
-        model = BindraModel(_config(model_dim=64, ligand=GATConfig(
-            hidden_dim=64, num_layers=2, num_heads=4, dropout=0.0
-        )))
+        model = BindraModel(_config(model_dim=64, ligand=KPGTConfig.mini(d_g_feats=64, n_mol_layers=2, n_trainable_layers=2, n_heads=4, d_hpath_ratio=2)))
         model.train()
         features, mask = _proteins(4, seed=23)
-        graphs = collate_graphs([featurize_molecule(s) for s in MOLECULES[:4]])
+        graphs = KPGTLigandBatch.from_smiles(list(MOLECULES[:4]))
         targets = AffinityTargets(
             endpoint_index=torch.zeros(4, dtype=torch.long),
             p_value=torch.tensor([5.0, 5.0, 9.0, 9.0]),
@@ -424,7 +402,7 @@ class TestOnCuda:
         model = BindraModel(_config()).cuda()
         model.train()
         features, mask = _proteins(len(MOLECULES), seed=41)
-        graphs = collate_graphs([featurize_molecule(s) for s in MOLECULES]).to("cuda")
+        graphs = KPGTLigandBatch.from_smiles(list(MOLECULES)).to("cuda")
         targets = AffinityTargets(
             endpoint_index=torch.zeros(len(MOLECULES), dtype=torch.long),
             p_value=torch.full((len(MOLECULES),), 8.0),

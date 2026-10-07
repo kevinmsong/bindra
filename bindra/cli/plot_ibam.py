@@ -135,8 +135,7 @@ def _explain_one(
     """
     import torch
 
-    from bindra.encoders.ligand_gat import GATLigandEncoder
-    from bindra.encoders.ligand_graph import collate_graphs, featurize_molecule
+    from bindra.encoders.ligand_kpgt import KPGTLigandEncoder
     from bindra.heads.affinity import ENDPOINT_ORDER
     from bindra.ibam.export import export_ibam
 
@@ -144,14 +143,17 @@ def _explain_one(
     protein = features.residue_features.to(device, dtype=torch.float32).unsqueeze(0)
     mask = torch.ones(1, protein.shape[1], dtype=torch.bool, device=device)
 
-    graph = featurize_molecule(smiles)
-    batch = collate_graphs([graph]).to(device)
+    # Through the arm, which owns its own batch type.
+    batch = model.ligand_encoder.collate_smiles([smiles]).to(device)
     with torch.no_grad():
         output = model(protein, mask, batch, need_attention=True)
 
     # The trained module behind the encoder-shaped wrapper, so the token
     # metadata and the attention come from the same weights.
-    wrapper = GATLigandEncoder(module=model.ligand_encoder, checkpoint=checkpoint_name)
+    wrapper = KPGTLigandEncoder(
+        model.config.ligand, module=model.ligand_encoder.module,
+        checkpoint=checkpoint_name,
+    )
     ligand_features = wrapper.encode(smiles)
 
     export = export_ibam(

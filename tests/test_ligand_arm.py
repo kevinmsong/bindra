@@ -35,7 +35,6 @@ from bindra.encoders.ligand_arm import (
     physical_token_destination,
 )
 from bindra.encoders.ligand_featurizers import LigandBatchBuilder, featurize_kpgt_one
-from bindra.encoders.ligand_gat import GATConfig, GATLigandEncoderModule
 from bindra.heads.affinity import AffinityHeadConfig
 from bindra.model import BindraConfig, BindraModel, BindraModelError
 
@@ -45,10 +44,6 @@ from bindra.model import BindraConfig, BindraModel, BindraModelError
 MOLECULES = ("CCO", "c1ccccc1", "CC(=O)Oc1ccccc1C(=O)O")
 HEAVY_ATOMS = (3, 6, 13)
 BONDS = (2, 6, 13)
-
-
-def gat_config() -> GATConfig:
-    return GATConfig(hidden_dim=16, num_layers=2, num_heads=4)
 
 
 def kpgt_config():
@@ -79,9 +74,9 @@ def protein(batch_size: int, length: int = 7):
 
 
 class TestTheContract:
-    def test_both_arms_satisfy_the_protocol(self) -> None:
-        assert isinstance(build_ligand_arm(gat_config()), LigandArm)
+    def test_the_arm_satisfies_the_protocol(self) -> None:
         assert isinstance(build_ligand_arm(kpgt_config()), LigandArm)
+
 
     def test_an_unregistered_config_is_refused_by_name(self) -> None:
         with pytest.raises(LigandArmError, match="no ligand arm is registered"):
@@ -92,8 +87,7 @@ class TestTheContract:
         with pytest.raises(BindraModelError, match="token_dim"):
             BindraConfig(protein_dim=32, ligand=object())
 
-    def test_token_dim_is_the_same_quantity_under_both_names(self) -> None:
-        assert gat_config().token_dim == gat_config().hidden_dim
+    def test_token_dim_names_the_arms_own_width(self) -> None:
         assert kpgt_config().token_dim == kpgt_config().d_g_feats
 
 
@@ -149,39 +143,10 @@ class TestPadding:
             )
 
 
-class TestTheGATArm:
-    def test_one_token_is_one_atom(self) -> None:
-        arm = GATLigandEncoderModule(gat_config())
-        tokens = arm.encode_for_fusion(arm.collate_smiles(MOLECULES))
-        assert tokens.token_mask.sum(1).tolist() == list(HEAVY_ATOMS)
-        assert tokens.tokens.shape == (3, max(HEAVY_ATOMS), 16)
 
-    def test_a_batch_without_a_padding_map_is_refused(self) -> None:
-        """Rather than silently deriving a width and paying a sync per step."""
-        import dataclasses
-
-        arm = GATLigandEncoderModule(gat_config())
-        batch = arm.collate_smiles(MOLECULES[:1])
-        stripped = dataclasses.replace(batch, token_destination=None, max_atoms=0)
-        with pytest.raises(LigandArmError, match="token_destination"):
-            arm.encode_for_fusion(stripped)
-
-    def test_the_gat_checkpoint_keys_are_unchanged(self) -> None:
-        """``ligand_encoder.<layer>``, with no wrapper level interposed.
-
-        The trained runs hold keys like ``ligand_encoder.input_projection.weight``.
-        """
-        model = build_model(gat_config())
-        keys = [k for k in model.state_dict() if k.startswith("ligand_encoder.")]
-        assert keys, "the arm registered no parameters under ligand_encoder."
-        assert "ligand_encoder.input_projection.weight" in keys
-        # A wrapper would produce ligand_encoder.module.* instead.
-        assert not any(k.startswith("ligand_encoder.module.") for k in keys)
-
-
-class TestTheKPGTArm:
-    def test_kpgt_drops_knowledge_nodes_from_the_token_axis(self) -> None:
-        """Bond-count tokens, not triplet-count, and not atom-count.
+class TestTheLiGhTArm:
+    def test_knowledge_nodes_are_tokens_but_not_physical(self) -> None:
+        """They attend; they are never drawable.
 
         KPGT's triplet axis is ``bonds + unbonded atoms + 2 knowledge nodes``.
         For these three molecules every atom is bonded, so the physical token
@@ -193,13 +158,28 @@ class TestTheKPGTArm:
         batch = arm.collate_smiles(MOLECULES)
         tokens = arm.encode_for_fusion(batch)
 
-        assert tokens.token_mask.sum(1).tolist() == list(BONDS)
-        # Ethanol is the discriminating case: 3 atoms but 2 bonds.
-        assert tokens.token_mask[0].sum().item() == 2 != HEAVY_ATOMS[0]
-        # The knowledge nodes are gone from the token axis...
+        # Every triplet is a token, knowledge nodes included: bonds + 2.
+        assert tokens.token_mask.sum(1).tolist() == [n + 2 for n in BONDS]
+        # Only the bonds are physical. Ethanol discriminates: 3 atoms, 2 bonds.
+        assert tokens.physical.sum(1).tolist() == list(BONDS)
+        assert tokens.physical[0].sum().item() == 2 != HEAVY_ATOMS[0]
+        # A non-physical token is still a real token the protein may attend to.
+        assert bool((tokens.token_mask & ~tokens.physical).any())
         assert batch.graphs.num_nodes == sum(BONDS) + 2 * len(MOLECULES)
-        # ...and still present in the readout, which is fp ++ md ++ mean.
         assert tokens.graph_states.shape == (3, 3 * 32)
+
+    def test_dropping_them_is_still_reachable_as_an_ablation(self) -> None:
+        from bindra.encoders.ligand_kpgt import KPGTConfig
+
+        arm = build_ligand_arm(
+            KPGTConfig.mini(
+                d_g_feats=32, n_mol_layers=2, n_heads=4, d_hpath_ratio=2,
+                n_trainable_layers=2, knowledge_tokens_in_fusion=False,
+            )
+        )
+        tokens = arm.encode_for_fusion(arm.collate_smiles(MOLECULES))
+        assert tokens.token_mask.sum(1).tolist() == list(BONDS)
+        assert tokens.physical_mask is None
 
     def test_knowledge_inputs_out_of_step_with_the_graphs_are_refused(self) -> None:
         from bindra.encoders.ligand_kpgt_arm import KPGTLigandBatch
@@ -233,21 +213,19 @@ class TestTheKPGTArm:
             arm.load_pretrained("does/not/exist.pth")
 
 
-class TestEitherArmInTheModel:
-    @pytest.mark.parametrize("name", ["gat", "kpgt"])
-    def test_the_model_runs_either_arm(self, name: str) -> None:
+class TestTheArmInTheModel:
+    def test_the_model_runs_the_arm(self) -> None:
         torch.manual_seed(0)
-        model = build_model(gat_config() if name == "gat" else kpgt_config())
+        model = build_model(kpgt_config())
         features, mask = protein(3)
         out = model.predict(features, mask, MOLECULES)
-        assert out.pair_representation.shape == (3, 4 * 16)
+        assert out.pair_representation.shape == (3, build_model(kpgt_config()).config.pair_dim)
         assert out.ligand_tokens is not None
         assert out.ligand_tokens.batch_size == 3
 
-    @pytest.mark.parametrize("name", ["gat", "kpgt"])
-    def test_every_shared_module_receives_gradient(self, name: str) -> None:
+    def test_every_shared_module_receives_gradient(self) -> None:
         torch.manual_seed(0)
-        model = build_model(gat_config() if name == "gat" else kpgt_config())
+        model = build_model(kpgt_config())
         features, mask = protein(2, length=5)
         out = model.predict(features, mask, MOLECULES[:2])
         out.prediction.observed(torch.zeros(2, dtype=torch.long)).sum().backward()
@@ -263,22 +241,15 @@ class TestEitherArmInTheModel:
                 assert parameter.grad is not None, f"no grad for {parameter_name}"
                 assert parameter.grad.abs().sum() > 0, f"zero grad for {parameter_name}"
 
-    def test_an_arm_refuses_the_other_arms_batch(self) -> None:
-        kpgt_model = build_model(kpgt_config())
-        gat_batch = build_ligand_arm(gat_config()).collate_smiles(MOLECULES[:1])
-        features, mask = protein(1, length=5)
-        with pytest.raises(LigandArmError, match="KPGTLigandBatch"):
-            kpgt_model(features, mask, gat_batch)
 
     def test_a_batch_that_is_not_a_batch_is_refused(self) -> None:
-        model = build_model(gat_config())
+        model = build_model(kpgt_config())
         features, mask = protein(1, length=5)
         with pytest.raises(BindraModelError, match="num_graphs"):
             model(features, mask, object())
 
     def test_the_arm_is_recorded_in_the_config_dict(self) -> None:
         """A results table must be able to say which arm produced it."""
-        assert build_model(gat_config()).config.to_dict()["ligand_arm"] == "GATConfig"
         assert build_model(kpgt_config()).config.to_dict()["ligand_arm"] == "KPGTConfig"
 
 
@@ -294,21 +265,13 @@ class TestLiGhTMini:
     pinning them permanently is uncorrectable rather than conservative.
     """
 
-    def test_it_is_capacity_matched_to_the_gat_arm(self) -> None:
-        """Otherwise the arms differ in size and the comparison means nothing."""
+    def test_the_default_mini_size_is_pinned(self) -> None:
+        """A silent size change would invalidate every recorded comparison."""
         from bindra.encoders.ligand_kpgt import KPGTConfig
 
         arm = build_ligand_arm(KPGTConfig.mini())
         trainable = sum(p.numel() for p in arm.module.parameters() if p.requires_grad)
-        gat = sum(
-            p.numel()
-            for p in build_ligand_arm(
-                GATConfig(hidden_dim=320, num_layers=5, num_heads=8)
-            ).parameters()
-        )
-        assert gat == 2_101_120
-        assert trainable == 2_232_352
-        assert 0.9 < trainable / gat < 1.15
+        assert trainable == 1_032_560
 
     def test_from_scratch_trains_the_embeddings(self) -> None:
         """The whole reason `from_scratch` is a regime and not a bigger count.
@@ -391,7 +354,7 @@ class TestLiGhTMini:
         assert not changed, f"metadata froze {len(changed)} parameters: {changed[:4]}"
         assert sum(
             p.numel() for p in arm.module.parameters() if p.requires_grad
-        ) == 2_232_352
+        ) == 1_032_560
 
     @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
     def test_an_unbonded_atom_survives_autocast(self, dtype) -> None:
@@ -418,7 +381,8 @@ class TestLiGhTMini:
 
         with torch.autocast("cpu", dtype=dtype, enabled=dtype is torch.bfloat16):
             out = model(features, mask, batch)
-        assert out.ligand_tokens.token_mask.sum(1).tolist() == [4, 13]
+        assert out.ligand_tokens.token_mask.sum(1).tolist() == [6, 15]
+        assert out.ligand_tokens.physical.sum(1).tolist() == [4, 13]
 
         out.prediction.observed(torch.zeros(2, dtype=torch.long)).float().sum().backward()
         for fragment in ("virtual_atom_emb", "virutal_bond_emb"):
@@ -476,19 +440,13 @@ class TestTheBatchBuilder:
     """The data-pipeline half: featurizing for an arm, inside a process pool."""
 
     def test_the_builder_and_its_featurizer_pickle(self) -> None:
-        """The hard constraint. ``executor.map`` cannot carry a closure.
-
-        A bound method, a lambda or a partial over a local would all pass every
-        other test here and fail only once a pool is attached, which is the
-        configuration that matters.
-        """
+        """The hard constraint. ``executor.map`` cannot carry a closure."""
         import pickle
 
-        for arm in ("gat", "kpgt"):
-            builder = LigandBatchBuilder(arm)
-            assert pickle.loads(pickle.dumps(builder)) == builder
-            # The function travels by qualified name, so it must be module-level.
-            assert pickle.loads(pickle.dumps(builder.featurize)) is builder.featurize
+        builder = LigandBatchBuilder("kpgt")
+        assert pickle.loads(pickle.dumps(builder)) == builder
+        assert pickle.loads(pickle.dumps(builder.featurize)) is builder.featurize
+
 
     def test_one_molecules_parts_survive_a_round_trip(self) -> None:
         """What comes back from a worker, for the arm that returns three things."""
@@ -506,7 +464,6 @@ class TestTheBatchBuilder:
         assert not np.isnan(parts.fingerprint).any()
 
     def test_the_arm_comes_from_the_config_not_a_flag(self) -> None:
-        assert LigandBatchBuilder.for_config(gat_config()).arm == "gat"
         assert LigandBatchBuilder.for_config(kpgt_config()).arm == "kpgt"
         with pytest.raises(ValueError, match="no ligand featurizer"):
             LigandBatchBuilder.for_config(object())
@@ -514,28 +471,22 @@ class TestTheBatchBuilder:
     def test_an_unknown_arm_is_refused(self) -> None:
         with pytest.raises(ValueError, match="unknown ligand arm"):
             LigandBatchBuilder("graphormer")
+        with pytest.raises(ValueError, match="no ligand featurizer"):
+            LigandBatchBuilder.for_config(object())
 
-    def test_each_arm_collates_its_own_batch_type(self) -> None:
-        from bindra.encoders.ligand_graph import BatchedGraphs
+    def test_the_builder_collates_the_arms_batch_type(self) -> None:
         from bindra.encoders.ligand_kpgt_arm import KPGTLigandBatch
-
-        gat = LigandBatchBuilder("gat")
-        batch = gat.collate([gat.featurize(s) for s in MOLECULES])
-        assert isinstance(batch, BatchedGraphs)
-        assert batch.total_atoms == sum(HEAVY_ATOMS)
 
         kpgt = LigandBatchBuilder("kpgt")
         parts = kpgt.collate([kpgt.featurize(s) for s in MOLECULES])
         assert isinstance(parts, KPGTLigandBatch)
-        # Bonds plus two knowledge nodes per molecule.
         assert parts.graphs.num_nodes == sum(BONDS) + 2 * len(MOLECULES)
         assert parts.fingerprints.shape == (3, 512)
         assert parts.descriptors.shape == (3, 200)
 
-    def test_each_arm_declares_what_a_bad_molecule_raises(self) -> None:
-        """Catching only the GAT error would let a KPGT failure escape a worker."""
+
+    def test_the_arm_declares_what_a_bad_molecule_raises(self) -> None:
+        """So a failure inside a worker process surfaces as itself."""
         from bindra.encoders.kpgt_graph import KPGTGraphError
 
         assert KPGTGraphError in LigandBatchBuilder("kpgt").featurization_errors
-        for arm in ("gat", "kpgt"):
-            assert LigandBatchBuilder(arm).featurization_errors

@@ -86,7 +86,7 @@ class LigandEncoder(Protocol):
         cache at ~8% GPU utilisation, and molecules are far smaller than
         proteins, so the same mistake would cost more here. Implementations must
         produce output identical to repeated :meth:`encode` calls, and
-        ``tests/test_ligand_gat.py`` asserts exactly that.
+        ``tests/test_ligand_kpgt.py`` asserts exactly that.
         """
 
 
@@ -137,13 +137,7 @@ def _load_builtin_encoders() -> None:
     Done lazily so that importing this module does not pull in torch modules or
     pretrained weights, and so a broken optional encoder cannot break the seam.
     """
-    from bindra.encoders import ligand_gat  # noqa: F401  (registers "gat")
-
-    try:
-        from bindra.encoders import ligand_kpgt  # noqa: F401  (registers "kpgt")
-    except ImportError:
-        # KPGT is unavailable until the port exists; the GAT arm still works.
-        pass
+    from bindra.encoders import ligand_kpgt  # noqa: F401  (registers "kpgt")
 
 
 def segment_softmax(

@@ -191,8 +191,8 @@ class PairBatch:
 
     protein_features: torch.Tensor  # [B, L, dp] bf16 on the host, float32 on device
     protein_mask: torch.Tensor  # [B, L] bool, True = real residue
-    #: Whatever the configured arm collates: ``BatchedGraphs`` for GAT, a
-    #: ``KPGTLigandBatch`` for KPGT. Typed loosely because the batch type *is*
+    #: Whatever the configured arm collates: a ``KPGTLigandBatch`` today.
+    #: Typed loosely because the batch type *is*
     #: what differs between arms; a consumer must go through the arm rather
     #: than assume atoms. Both expose ``num_graphs`` and ``to``.
     ligands: object

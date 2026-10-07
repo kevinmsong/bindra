@@ -31,9 +31,9 @@ are real.
 
 ## Why padding moved into the arm
 
-:func:`bindra.model.pad_token_states` padded ``BatchedGraphs`` on the assumption
-that every token is a real atom. That holds for the GAT arm and fails for KPGT,
-whose batch carries two **knowledge nodes** per molecule. Padding them in would
+An earlier padding helper assumed every token was a real atom. That holds for
+an atom-token arm and fails for LiGhT, whose batch carries two **knowledge
+nodes** per molecule. Padding them in would
 put a fingerprint vector on the cross-attention token axis, where the protein
 would attend to it and produce a map whose mass sits on something that cannot be
 drawn on a molecule -- precisely what
@@ -51,8 +51,8 @@ via ``indicators <= 0``.
 ## The one synchronisation
 
 ``pad_by_destination`` needs a width, and a width is a host-side integer. The
-GAT path gets it free: ``collate_graphs`` computes ``max_atoms`` in numpy on the
-CPU, where the data already is. An arm that must derive it from a device tensor
+An arm whose collation computes the width in numpy on the CPU gets it free.
+An arm that must derive it from a device tensor
 pays **one** device-to-host stall per batch. That is the right order of
 magnitude -- the defect this codebase already paid for was 190 microseconds per
 *molecule*, 49 ms at batch 256 -- but it is not free, so arms precompute the
@@ -84,9 +84,28 @@ class FusionTokens:
     """
 
     tokens: torch.Tensor  # [B, T, token_dim]
-    token_mask: torch.Tensor  # [B, T] bool, True = real physical token
+    token_mask: torch.Tensor  # [B, T] bool, True = a real token (not padding)
     graph_states: torch.Tensor  # [B, graph_dim]
+    #: True where a token maps to atoms and may therefore be **drawn**. Differs
+    #: from ``token_mask`` only for arms carrying non-physical tokens: KPGT's
+    #: two knowledge nodes are real tokens that participate in attention but
+    #: correspond to no atom.
+    #:
+    #: Two masks rather than one because the two questions are different.
+    #: ``token_mask`` answers "may attention see this?", ``physical_mask``
+    #: answers "may iBAM paint this onto a molecule?". Collapsing them forced
+    #: the earlier design to drop knowledge nodes before fusion -- solving a
+    #: *reporting* problem at *computation* time, and removing the protein's
+    #: only conditional path to whole-molecule properties.
+    #:
+    #: ``None`` means every real token is physical, which is the GAT case.
+    physical_mask: torch.Tensor | None = None
     attention: tuple[torch.Tensor, ...] = ()
+
+    @property
+    def physical(self) -> torch.Tensor:
+        """``physical_mask`` if the arm set one, else ``token_mask``."""
+        return self.token_mask if self.physical_mask is None else self.physical_mask
 
     def __post_init__(self) -> None:
         if self.tokens.ndim != 3:
@@ -113,6 +132,17 @@ class FusionTokens:
                 f"graph_states has {self.graph_states.shape[0]} rows against "
                 f"{self.tokens.shape[0]} token rows"
             )
+        if self.physical_mask is not None:
+            if self.physical_mask.shape != self.token_mask.shape:
+                raise LigandArmError(
+                    f"physical_mask must be {tuple(self.token_mask.shape)}, got "
+                    f"{tuple(self.physical_mask.shape)}"
+                )
+            if bool((self.physical_mask & ~self.token_mask).any()):
+                raise LigandArmError(
+                    "physical_mask marks a padding position as physical; a token "
+                    "that attention cannot see cannot be drawable either"
+                )
 
     @property
     def batch_size(self) -> int:
@@ -135,6 +165,22 @@ class LigandArm(Protocol):
     @property
     def graph_dim(self) -> int:
         """Width of the whole-molecule readout."""
+
+    @property
+    def graph_components(self) -> tuple[int, ...]:
+        """Widths of the readout's parts, in order, summing to ``graph_dim``.
+
+        A readout is rarely one thing. GAT's is a mean concatenated with a max;
+        KPGT's is the fingerprint node, the descriptor node and the mean of the
+        rest. Declaring the split lets the adapters project each part into its
+        own block of the pair vector instead of compressing the whole
+        concatenation through a single ``Linear`` into one block.
+
+        That compression was the bottleneck: for LiGhT, two thirds of a 576-wide
+        readout is knowledge, and all of it had to fit one ``model_dim`` block
+        alongside three others. An arm with a genuinely unitary readout returns
+        a single-element tuple and nothing changes for it.
+        """
 
     def encode_for_fusion(
         self, batch: Any, *, return_attention: bool = False
@@ -214,15 +260,10 @@ def build_ligand_arm(config: Any) -> LigandArm:
     """Construct the arm its config names, without naming either arm here.
 
     Dispatch is on the config type, so adding an arm does not mean editing
-    :class:`~bindra.model.BindraModel`. KPGT is imported lazily: it pulls RDKit
-    descriptor machinery and the pure-PyTorch LiGhT port, and a broken optional
-    arm must not stop the GAT arm from building.
+    :class:`~bindra.model.BindraModel`. LiGhT is the only arm; the dispatch is
+    kept because the seam is what lets a second one be added without the fusion
+    stack, the adapters or iBAM learning its name.
     """
-    from bindra.encoders.ligand_gat import GATConfig, GATLigandEncoderModule
-
-    if isinstance(config, GATConfig):
-        return GATLigandEncoderModule(config)
-
     from bindra.encoders.ligand_kpgt import KPGTConfig
 
     if isinstance(config, KPGTConfig):
@@ -232,7 +273,7 @@ def build_ligand_arm(config: Any) -> LigandArm:
 
     raise LigandArmError(
         f"no ligand arm is registered for config type {type(config).__name__}; "
-        "expected GATConfig or KPGTConfig"
+        "expected KPGTConfig"
     )
 
 

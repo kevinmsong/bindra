@@ -230,11 +230,6 @@ class TestMetadata:
         assert metadata.checkpoint == "untrained"
         assert metadata.name == "ligand_kpgt"
 
-    def test_the_cache_key_differs_from_the_gat_arm(self, encoder):
-        from bindra.encoders.ligand_gat import GATConfig, GATLigandEncoder
-
-        gat = GATLigandEncoder(GATConfig(hidden_dim=48, num_heads=4))
-        assert encoder.metadata().cache_key("CCO") != gat.metadata().cache_key("CCO")
 
     def test_the_graph_dimension_travels_with_the_metadata(self, encoder):
         assert encoder.metadata().extra["graph_dim"] == encoder.graph_dim
@@ -254,8 +249,9 @@ class TestRegistry:
         """It was absent while DGL blocked it; the port changed that."""
         assert "kpgt" in available_ligand_encoders()
 
-    def test_both_arms_are_registered(self):
-        assert {"gat", "kpgt"} <= set(available_ligand_encoders())
+    def test_the_arm_is_registered(self):
+        assert "kpgt" in set(available_ligand_encoders())
+        assert "gat" not in set(available_ligand_encoders())
 
     def test_building_by_name_works(self):
         built = build_ligand_encoder(

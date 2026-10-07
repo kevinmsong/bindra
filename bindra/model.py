@@ -1,4 +1,4 @@
-"""The assembled model: cached protein features and SMILES in, affinity out.
+"""BINDRA-v1: cached protein features and SMILES in, affinity out.
 
 This is the seam the specification's end-to-end requirement runs through --
 "from target sequence and SMILES through affinity prediction plus iBAM" -- and the
@@ -50,8 +50,7 @@ from bindra.encoders.ligand_arm import (
     build_ligand_arm,
     pad_by_destination,
 )
-from bindra.encoders.ligand_gat import GATConfig
-from bindra.encoders.ligand_graph import BatchedGraphs
+from bindra.encoders.ligand_kpgt import KPGTConfig
 from bindra.features.types import EncoderMetadata
 from bindra.fusion.adapters import AdapterConfig, SharedAdapters, masked_mean
 from bindra.fusion.cross_attention import (
@@ -61,44 +60,14 @@ from bindra.fusion.cross_attention import (
 )
 from bindra.heads.affinity import AffinityHeadConfig, AffinityHeads, AffinityPrediction
 
+#: Name of this architecture, recorded in every provenance block so a results
+#: table says which model produced it. Bump it when the shape changes in a way
+#: that makes two runs incomparable.
+ARCHITECTURE_NAME = "BINDRA-v1"
+
 
 class BindraModelError(ValueError):
     """Inputs inconsistent with the model's declared widths or batch size."""
-
-
-def pad_token_states(
-    states: torch.Tensor, batch: BatchedGraphs
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Turn concatenated per-atom states into padded ``[B, T, D]`` plus a mask.
-
-    The ligand encoder works on a concatenated batch, because molecule sizes span
-    three orders of magnitude and padding there would waste most of the work.
-    Cross-attention needs a dense axis, so the padding happens at the boundary --
-    and the mask it returns is what keeps the padding out of the attention.
-
-    Kept as a function on ``BatchedGraphs`` because callers and tests use it, but
-    the padding itself now lives in
-    :func:`bindra.encoders.ligand_arm.pad_by_destination`, and each **arm** owns
-    the decision of which tokens to pad. This one pads every token, which is
-    correct here and wrong for KPGT: that arm's knowledge nodes are not atoms
-    and must not occupy a row in the attention map.
-    """
-    num_graphs = batch.num_graphs
-    if num_graphs == 0:
-        return states.new_zeros(0, 0, states.shape[-1]), torch.zeros(
-            0, 0, dtype=torch.bool, device=states.device
-        )
-    if batch.token_destination is None or not batch.max_atoms:
-        raise ValueError(
-            "this batch carries no token_destination; build it with "
-            "collate_graphs so the padding map is computed on the CPU"
-        )
-    return pad_by_destination(
-        states,
-        batch.token_destination,
-        num_graphs=num_graphs,
-        width=batch.max_atoms,
-    )
 
 
 @dataclass(frozen=True)
@@ -110,20 +79,39 @@ class BindraConfig:
     a mismatch between the ligand encoder's width and the adapter's input is not
     expressible.
 
-    ``ligand`` selects the **arm**: a ``GATConfig`` or a ``KPGTConfig``. The
-    widths are read through ``token_dim``/``graph_dim``, which both configs
-    expose, so this class never learns either arm's internal field names. The
-    default stays ``GATConfig`` -- the trained checkpoints are GAT, and a
-    default that silently changed which encoder a run used would make a results
-    table ambiguous about what produced it.
+    ``ligand`` selects the **arm**. LiGhT is the only one, and the widths are
+    read through ``token_dim``/``graph_dim`` so this class never learns an
+    arm's internal field names -- which is what lets a second arm be added
+    without the adapters, the fusion stack or iBAM knowing it exists.
     """
 
     protein_dim: int
-    ligand: object = field(default_factory=GATConfig)
+    ligand: object = field(default_factory=KPGTConfig.mini)
     model_dim: int = 256
     cross_attention_layers: int = 2
     cross_attention_heads: int = 8
     dropout: float = 0.1
+    #: Width of each fusion feed-forward block, as a multiple of ``model_dim``.
+    #:
+    #: Exposed because the fusion stack is where this model's parameters
+    #: actually are, and its feed-forwards are most of that. At the default 4
+    #: and two layers, fusion is **4,931,840 of 9,324,195** trainable
+    #: parameters -- 52.9%, against 23.9% for the ligand arm. An ablation
+    #: between two arms is therefore read through a shared stack twice their
+    #: size, which attenuates whatever difference exists.
+    #:
+    #: Measured alternatives, holding layers at 2: a multiplier of 2 gives
+    #: 3,290,880 (42.8% fusion, 29.1% arm) and 1 gives 2,470,400 (36.0% / 32.5%).
+    #:
+    #: **The default stays 4**, because changing it changes the model that
+    #: produced the recorded 1.0809 and that number is the current baseline.
+    #: Lowering it keeps an arm-versus-arm comparison valid -- both arms see the
+    #: same stack -- but costs a fresh GAT run to restore a comparable target.
+    feedforward_multiplier: int = 4
+    #: Give each part of the ligand graph readout its own projection and its own
+    #: block of the pair vector, instead of compressing the concatenation into
+    #: one. See ``AdapterConfig.graph_components``. Widens ``pair_dim``.
+    split_graph_readout: bool = True
     head: AffinityHeadConfig = field(default_factory=AffinityHeadConfig)
 
     def __post_init__(self) -> None:
@@ -135,12 +123,18 @@ class BindraConfig:
                 )
 
     def adapter_config(self) -> AdapterConfig:
+        components = None
+        if self.split_graph_readout:
+            components = getattr(self.ligand, "graph_components", None)
+            if components is None:
+                components = (self.ligand.graph_dim,)  # type: ignore[attr-defined]
         return AdapterConfig(
             protein_dim=self.protein_dim,
             ligand_dim=self.ligand.token_dim,  # type: ignore[attr-defined]
             ligand_graph_dim=self.ligand.graph_dim,  # type: ignore[attr-defined]
             model_dim=self.model_dim,
             dropout=self.dropout,
+            graph_components=components,
         )
 
     def cross_attention_config(self) -> CrossAttentionConfig:
@@ -149,19 +143,28 @@ class BindraConfig:
             num_heads=self.cross_attention_heads,
             num_layers=self.cross_attention_layers,
             dropout=self.dropout,
+            feedforward_multiplier=self.feedforward_multiplier,
         )
 
     @property
     def pair_dim(self) -> int:
-        """Width of the pooled pair representation: four ``model_dim`` blocks."""
-        return 4 * self.model_dim
+        """Width of the pooled pair representation.
+
+        Three fixed blocks -- fused protein, fused ligand, pre-fusion protein --
+        plus one per graph-readout component. With ``split_graph_readout`` off
+        that is the historical four.
+        """
+        return (3 + self.adapter_config().graph_blocks) * self.model_dim
 
     def to_dict(self) -> dict[str, object]:
         return {
+            "architecture": ARCHITECTURE_NAME,
             "protein_dim": self.protein_dim,
             "model_dim": self.model_dim,
             "cross_attention_layers": self.cross_attention_layers,
             "cross_attention_heads": self.cross_attention_heads,
+            "feedforward_multiplier": self.feedforward_multiplier,
+            "split_graph_readout": self.split_graph_readout,
             "dropout": self.dropout,
             "ligand": self.ligand.to_dict(),  # type: ignore[attr-defined]
             "ligand_arm": type(self.ligand).__name__,
@@ -278,6 +281,7 @@ class BindraModel(nn.Module):
             (
                 masked_mean(fused.protein, protein_mask),
                 masked_mean(fused.ligand, ligand_mask),
+                # One block per readout component when the arm declares a split.
                 adapted["ligand_graph"],
                 # The pre-fusion protein mean: a path that does not depend on
                 # attention having found anything.
@@ -376,9 +380,9 @@ def _ligand_device(batch: object) -> torch.device:
 
 
 __all__ = [
+    "ARCHITECTURE_NAME",
     "BindraConfig",
     "BindraModel",
     "BindraModelError",
     "BindraOutput",
-    "pad_token_states",
 ]

@@ -73,12 +73,6 @@ def _ligand_config(args):
     KPGT run is not expressible. Both are built here rather than in ``cmd_fit``
     so the loaders and the model can be handed the same object.
     """
-    if args.ligand_arm == "gat":
-        from bindra.encoders.ligand_gat import GATConfig
-
-        return GATConfig(
-            hidden_dim=args.ligand_dim, num_layers=args.ligand_layers, num_heads=8
-        )
     from bindra.encoders.ligand_kpgt import KPGTConfig
 
     # LiGhT-mini, and only LiGhT-mini. The published 91.9M `base` shape was
@@ -101,11 +95,6 @@ def _ligand_metadata(ligand, module):
     arm's own rather than a generic summary. Every results table reads this to
     say which arm produced it.
     """
-    from bindra.encoders.ligand_gat import GATConfig, GATLigandEncoder
-
-    if isinstance(ligand, GATConfig):
-        return GATLigandEncoder(ligand, module=module).metadata()
-
     from bindra.encoders.ligand_kpgt import KPGTLigandEncoder
 
     checkpoint = getattr(module, "pretrained_checkpoint", None) or "untrained"
@@ -186,7 +175,7 @@ def cmd_fit(args) -> int:
     ligand = _ligand_config(args)
     ligand_builder = LigandBatchBuilder.for_config(ligand)
     print(
-        f"[{INFO}] building loaders for the {ligand_builder.arm!r} ligand arm "
+        f"[{INFO}] building loaders for the LiGhT ligand arm "
         "(one pass over the corpus)...",
         flush=True,
     )
@@ -225,6 +214,7 @@ def cmd_fit(args) -> int:
         cross_attention_layers=args.fusion_layers,
         cross_attention_heads=8,
         dropout=args.dropout,
+        feedforward_multiplier=args.feedforward_multiplier,
         head=AffinityHeadConfig(hidden_dim=args.model_dim, dropout=args.dropout),
     )
     model = BindraModel(config)
@@ -324,20 +314,16 @@ def build_parser():
     parser.add_argument("--patience", type=int, default=3)
     parser.add_argument("--ema", type=float, default=0.999)
     parser.add_argument("--dropout", type=float, default=0.1)
-    parser.add_argument("--model-dim", type=int, default=256)
-    parser.add_argument(
-        "--ligand-arm", default="gat", choices=("gat", "kpgt"),
-        help="Which ligand encoder to train. 'gat' is what the existing runs "
-             "used. 'kpgt' builds LiGhT-mini: a 2,232,352-parameter line-graph "
-             "transformer trained from scratch, sized against the GAT arm so "
-             "the comparison is about tokens and not capacity. It reports as "
-             "'ligand_light_mini', not KPGT, because it has the architecture "
-             "and not the pre-training; see docs/STATUS.md.",
-    )
-    #: GAT only.
-    parser.add_argument("--ligand-dim", type=int, default=256)
-    parser.add_argument("--ligand-layers", type=int, default=4)
+    parser.add_argument("--model-dim", type=int, default=160)
     parser.add_argument("--fusion-layers", type=int, default=2)
+    parser.add_argument(
+        "--feedforward-multiplier", type=int, default=2,
+        help="Fusion feed-forward width, as a multiple of --model-dim. At the "
+             "default 4 the fusion stack is 52.9%% of trainable parameters "
+             "against the ligand arm's 23.9%%; 2 gives 42.8%%/29.1%% and 1 gives "
+             "36.0%%/32.5%%. Lowering it keeps an arm-vs-arm comparison valid but "
+             "invalidates the recorded 1.0809 baseline.",
+    )
     parser.add_argument(
         "--accumulate", type=int, default=1,
         help="Micro-batches per optimizer step. Raises the effective batch at "

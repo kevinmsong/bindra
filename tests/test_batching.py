@@ -174,7 +174,7 @@ class TestDeterminism:
 
 class TestPairBatch:
     def _batch(self, sizes=(3, 5)) -> PairBatch:
-        from bindra.encoders.ligand_graph import collate_graphs, featurize_molecule
+        from bindra.encoders.ligand_kpgt_arm import KPGTLigandBatch
         from bindra.training.losses.affinity import AffinityTargets
 
         width = max(sizes)
@@ -187,7 +187,7 @@ class TestPairBatch:
         return PairBatch(
             protein_features=features,
             protein_mask=mask,
-            ligands=collate_graphs([featurize_molecule("CCO") for _ in sizes]),
+            ligands=KPGTLigandBatch.from_smiles(["CCO" for _ in sizes]),
             targets=AffinityTargets(
                 endpoint_index=torch.zeros(len(sizes), dtype=torch.long),
                 p_value=torch.full((len(sizes),), 8.0),

@@ -66,13 +66,6 @@ class KPGTMoleculeParts:
     descriptors: Any  # np.ndarray [200] float32
 
 
-def featurize_gat_one(smiles: str) -> Any:
-    """One molecule's atom-level graph. Picklable; maps in the pool."""
-    from bindra.encoders.ligand_graph import featurize_molecule
-
-    return featurize_molecule(smiles)
-
-
 def featurize_kpgt_one(smiles: str) -> KPGTMoleculeParts:
     """One molecule's triplet graph plus both knowledge vectors.
 
@@ -104,12 +97,6 @@ def featurize_kpgt_one(smiles: str) -> KPGTMoleculeParts:
     )
 
 
-def _collate_gat(parts: Sequence[Any]) -> Any:
-    from bindra.encoders.ligand_graph import collate_graphs
-
-    return collate_graphs(list(parts))
-
-
 def _collate_kpgt(parts: Sequence[KPGTMoleculeParts]) -> Any:
     import numpy as np
     import torch
@@ -138,44 +125,36 @@ class LigandBatchBuilder:
     one arm and encode with the other.
     """
 
-    arm: str = "gat"
+    arm: str = "kpgt"
 
     def __post_init__(self) -> None:
-        if self.arm not in ("gat", "kpgt"):
-            raise ValueError(
-                f"unknown ligand arm {self.arm!r}; expected 'gat' or 'kpgt'"
-            )
+        if self.arm != "kpgt":
+            raise ValueError(f"unknown ligand arm {self.arm!r}; expected 'kpgt'")
 
     @classmethod
     def for_config(cls, config: object) -> "LigandBatchBuilder":
-        """Derive the arm from a ``GATConfig`` or ``KPGTConfig``.
+        """Derive the arm from a ``KPGTConfig``.
 
         Dispatches on type rather than on a flag so that the model and the data
         pipeline cannot disagree about which arm a run uses -- they are handed
         the same object.
         """
-        from bindra.encoders.ligand_gat import GATConfig
+        from bindra.encoders.ligand_kpgt import KPGTConfig
 
-        if isinstance(config, GATConfig):
-            return cls("gat")
-        try:
-            from bindra.encoders.ligand_kpgt import KPGTConfig
-        except ImportError:  # pragma: no cover - KPGT is optional
-            KPGTConfig = ()  # type: ignore[assignment]
-        if KPGTConfig and isinstance(config, KPGTConfig):
+        if isinstance(config, KPGTConfig):
             return cls("kpgt")
         raise ValueError(
             f"no ligand featurizer for config type {type(config).__name__}; "
-            "expected GATConfig or KPGTConfig"
+            "expected KPGTConfig"
         )
 
     @property
     def featurize(self) -> Callable[[str], Any]:
         """The per-molecule function, as a picklable module-level reference."""
-        return featurize_gat_one if self.arm == "gat" else featurize_kpgt_one
+        return featurize_kpgt_one
 
     def collate(self, parts: Sequence[Any]) -> Any:
-        return _collate_gat(parts) if self.arm == "gat" else _collate_kpgt(parts)
+        return _collate_kpgt(parts)
 
     @property
     def featurization_errors(self) -> tuple[type[BaseException], ...]:
@@ -185,19 +164,14 @@ class LigandBatchBuilder:
         catching only the GAT one would let a KPGT failure escape as an opaque
         traceback from inside a worker process.
         """
-        from bindra.encoders.ligand_graph import LigandGraphError
-
-        if self.arm == "gat":
-            return (LigandGraphError,)
         from bindra.encoders.kpgt_graph import KPGTGraphError
         from bindra.encoders.ligand_arm import LigandArmError
 
-        return (KPGTGraphError, LigandArmError, LigandGraphError)
+        return (KPGTGraphError, LigandArmError)
 
 
 __all__ = [
     "KPGTMoleculeParts",
     "LigandBatchBuilder",
-    "featurize_gat_one",
     "featurize_kpgt_one",
 ]

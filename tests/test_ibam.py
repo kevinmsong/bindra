@@ -25,7 +25,7 @@ import numpy as np
 import pytest
 import torch
 
-from bindra.encoders.ligand_gat import GATConfig, GATLigandEncoder
+from bindra.encoders.ligand_kpgt import KPGTConfig, KPGTLigandEncoder
 from bindra.features.types import EncoderMetadata, LigandFeatures, TokenType
 from bindra.fusion.cross_attention import CrossAttentionConfig, CrossAttentionStack
 from bindra.ibam.export import (
@@ -52,7 +52,10 @@ def stack() -> CrossAttentionStack:
 @pytest.fixture
 def ligand_features() -> LigandFeatures:
     torch.manual_seed(20261001)
-    encoder = GATLigandEncoder(GATConfig(hidden_dim=32, num_layers=1, num_heads=4))
+    encoder = KPGTLigandEncoder(
+        KPGTConfig.mini(d_g_feats=32, n_mol_layers=1, n_trainable_layers=1,
+                        n_heads=4, d_hpath_ratio=2)
+    )
     encoder.module.eval()
     return encoder.encode("CC(=O)Oc1ccccc1C(=O)O")
 
@@ -188,15 +191,15 @@ class TestDeriveResidueAtom:
 
 class TestExport:
     def test_the_native_and_derived_views_are_both_exported(self, stack, ligand_features):
-        fused = _fused(stack, ligand_features.num_atoms)
+        fused = _fused(stack, len(ligand_features.token_types))
         export = export_ibam(fused, ligand_features)
-        assert export.residue_token.shape == (7, ligand_features.num_atoms)
+        assert export.residue_token.shape == (7, len(ligand_features.token_types))
         assert export.residue_atom.shape == (7, ligand_features.num_atoms)
         assert export.residue_atom_is_derived is True
 
     def test_the_derived_flag_cannot_be_turned_off(self, stack, ligand_features):
         """There is no path producing a residue x atom matrix claimed as native."""
-        fused = _fused(stack, ligand_features.num_atoms)
+        fused = _fused(stack, len(ligand_features.token_types))
         export = export_ibam(fused, ligand_features)
         with pytest.raises(IBAMExportError, match="always a derived aggregation"):
             IBAMExport(
@@ -211,29 +214,29 @@ class TestExport:
             )
 
     def test_the_disclaimer_travels_with_the_matrices(self, stack, ligand_features):
-        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        export = export_ibam(_fused(stack, len(ligand_features.token_types)), ligand_features)
         assert export.disclaimer == DISCLAIMER
         assert "NOT an experimentally established contact map" in export.metadata()["disclaimer"]
 
     def test_full_per_layer_per_head_attention_is_retained_unaveraged(
         self, stack, ligand_features
     ):
-        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        export = export_ibam(_fused(stack, len(ligand_features.token_types)), ligand_features)
         assert export.attention_by_layer_head.shape == (
-            2, 4, 7, ligand_features.num_atoms
+            2, 4, 7, len(ligand_features.token_types)
         )
         assert export.num_layers == 2 and export.num_heads == 4
 
     def test_the_last_layer_is_what_the_default_policy_reduces_to(
         self, stack, ligand_features
     ):
-        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        export = export_ibam(_fused(stack, len(ligand_features.token_types)), ligand_features)
         expected = export.attention_by_layer_head[-1].mean(axis=0)
         assert np.allclose(export.residue_token, expected, atol=1e-6)
 
     def test_padding_is_removed_from_the_export(self, stack, ligand_features):
         """Exported rows and columns are real residues and real tokens only."""
-        num_tokens = ligand_features.num_atoms
+        num_tokens = len(ligand_features.token_types)
         torch.manual_seed(3)
         protein_mask = torch.zeros(1, 20, dtype=torch.bool)
         protein_mask[:, :7] = True
@@ -248,17 +251,17 @@ class TestExport:
 
     def test_a_mismatched_molecule_is_refused(self, stack, ligand_features):
         """The fused batch and the features must describe the same molecule."""
-        fused = _fused(stack, ligand_features.num_atoms + 2)
+        fused = _fused(stack, len(ligand_features.token_types) + 2)
         with pytest.raises(IBAMExportError, match="not the same molecule"):
             export_ibam(fused, ligand_features)
 
     def test_an_out_of_range_batch_index_is_refused(self, stack, ligand_features):
-        fused = _fused(stack, ligand_features.num_atoms)
+        fused = _fused(stack, len(ligand_features.token_types))
         with pytest.raises(IBAMExportError, match="outside the batch"):
             export_ibam(fused, ligand_features, index=5)
 
     def test_a_row_is_selected_from_a_larger_batch(self, stack, ligand_features):
-        fused = _fused(stack, ligand_features.num_atoms, batch=3)
+        fused = _fused(stack, len(ligand_features.token_types), batch=3)
         for index in range(3):
             export = export_ibam(fused, ligand_features, index=index)
             expected = fused.p2l_attention[-1][index].mean(dim=0).detach().numpy()
@@ -266,12 +269,12 @@ class TestExport:
 
     def test_the_encoder_identities_are_recorded(self, stack, ligand_features):
         export = export_ibam(
-            _fused(stack, ligand_features.num_atoms),
+            _fused(stack, len(ligand_features.token_types)),
             ligand_features,
             protein_encoder="esmc-600m",
             model_checkpoint="epoch42",
         )
-        assert export.ligand_encoder == "ligand_gat"
+        assert export.ligand_encoder == "ligand_light_mini"
         assert export.protein_encoder == "esmc-600m"
         assert export.model_checkpoint == "epoch42"
 
@@ -283,7 +286,7 @@ class TestResidueNumbering:
         A row number is not a residue number for any of them, so exporting rows
         would misplace every annotation.
         """
-        fused = _fused(stack, ligand_features.num_atoms)
+        fused = _fused(stack, len(ligand_features.token_types))
         # A construct whose features start at residue 2000 after windowing.
         positions = torch.arange(2000, 2007)
         export = export_ibam(fused, ligand_features, residue_positions=positions)
@@ -293,16 +296,16 @@ class TestResidueNumbering:
     def test_the_fallback_is_row_numbers_and_is_only_right_for_short_proteins(
         self, stack, ligand_features
     ):
-        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        export = export_ibam(_fused(stack, len(ligand_features.token_types)), ligand_features)
         assert export.residue_positions.tolist() == list(range(7))
 
     def test_a_wrong_number_of_positions_is_refused(self, stack, ligand_features):
-        fused = _fused(stack, ligand_features.num_atoms)
+        fused = _fused(stack, len(ligand_features.token_types))
         with pytest.raises(IBAMExportError, match="positions for"):
             export_ibam(fused, ligand_features, residue_positions=torch.arange(3))
 
     def test_a_window_slices_by_sequence_position_not_by_row(self, stack, ligand_features):
-        fused = _fused(stack, ligand_features.num_atoms)
+        fused = _fused(stack, len(ligand_features.token_types))
         export = export_ibam(
             fused, ligand_features, residue_positions=torch.arange(2000, 2007)
         )
@@ -312,7 +315,7 @@ class TestResidueNumbering:
         assert window.attention_by_layer_head.shape[2] == 3
 
     def test_an_empty_window_is_an_error_not_an_empty_plot(self, stack, ligand_features):
-        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        export = export_ibam(_fused(stack, len(ligand_features.token_types)), ligand_features)
         with pytest.raises(IBAMExportError, match="no residues"):
             export.residue_window(500, 600)
 
@@ -323,7 +326,7 @@ class TestRenormalization:
 
     def test_when_renormalized_the_export_discloses_it(self, stack, ligand_features):
         export = export_ibam(
-            _fused(stack, ligand_features.num_atoms),
+            _fused(stack, len(ligand_features.token_types)),
             ligand_features,
             policy=AggregationPolicy(renormalize_physical=True),
         )
@@ -349,12 +352,12 @@ class TestSummaries:
     def test_per_residue_and_per_atom_are_marginals_of_the_derived_view(
         self, stack, ligand_features
     ):
-        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        export = export_ibam(_fused(stack, len(ligand_features.token_types)), ligand_features)
         assert np.allclose(export.per_residue, export.residue_atom.sum(axis=1), atol=1e-6)
         assert np.allclose(export.per_atom, export.residue_atom.sum(axis=0), atol=1e-6)
 
     def test_top_atoms_are_reported_in_standardized_indexing(self, stack, ligand_features):
-        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        export = export_ibam(_fused(stack, len(ligand_features.token_types)), ligand_features)
         top = export.top_atoms(3)
         assert len(top) == 3
         assert all(0 <= index < ligand_features.num_atoms for index, _ in top)
@@ -368,19 +371,21 @@ class TestSummaries:
 class TestWriting:
     def test_matrices_and_metadata_are_both_written(self, stack, ligand_features, tmp_path):
         """Numeric export is mandatory; an image alone is not an export."""
-        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        export = export_ibam(_fused(stack, len(ligand_features.token_types)), ligand_features)
         paths = export.write(tmp_path / "run")
         assert paths["matrices"].exists() and paths["metadata"].exists()
 
         with np.load(paths["matrices"]) as loaded:
             assert np.allclose(loaded["residue_token"], export.residue_token)
             assert np.allclose(loaded["residue_atom"], export.residue_atom)
-            assert loaded["attention_by_layer_head"].shape == (2, 4, 7, ligand_features.num_atoms)
+            assert loaded["attention_by_layer_head"].shape == (
+                2, 4, 7, len(ligand_features.token_types)
+            )
 
     def test_the_metadata_records_the_aggregation_rule_and_its_hash(
         self, stack, ligand_features, tmp_path
     ):
-        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        export = export_ibam(_fused(stack, len(ligand_features.token_types)), ligand_features)
         paths = export.write(tmp_path / "run")
         payload = json.loads(paths["metadata"].read_text(encoding="utf-8"))
         assert payload["aggregation"]["bond_split"] == "equal"
@@ -390,7 +395,7 @@ class TestWriting:
 
     def test_ensemble_variability_is_recorded_when_supplied(self, stack, ligand_features):
         """The specification asks for it 'where calculated', so absence is explicit."""
-        fused = _fused(stack, ligand_features.num_atoms)
+        fused = _fused(stack, len(ligand_features.token_types))
         without = export_ibam(fused, ligand_features)
         assert without.ensemble_std is None
         assert without.metadata()["has_ensemble_variability"] is False
@@ -414,7 +419,8 @@ class TestEndToEnd:
         model = BindraModel(
             BindraConfig(
                 protein_dim=48,
-                ligand=GATConfig(hidden_dim=32, num_layers=1, num_heads=4, dropout=0.0),
+                ligand=KPGTConfig.mini(d_g_feats=32, n_mol_layers=1, n_trainable_layers=1,
+                                       n_heads=4, d_hpath_ratio=2),
                 model_dim=32,
                 cross_attention_layers=1,
                 cross_attention_heads=4,
@@ -429,11 +435,11 @@ class TestEndToEnd:
         with torch.no_grad():
             out = model.predict(features, mask, [smiles])
 
-        encoder = GATLigandEncoder(model.config.ligand, module=model.ligand_encoder)
+        encoder = KPGTLigandEncoder(model.config.ligand, module=model.ligand_encoder.module)
         ligand_features = encoder.encode(smiles)
         export = export_ibam(out.fusion, ligand_features, protein_encoder="esmc-600m")
 
-        assert export.residue_token.shape == (11, 13)
+        assert export.residue_token.shape == (11, len(ligand_features.token_types))
         assert export.num_atoms == 13
         assert np.isfinite(export.residue_atom).all()
         # Conservation holds on a real forward pass, not only on synthetic input.
@@ -467,7 +473,7 @@ class TestPlots:
     def test_vector_formats_are_written_by_default(self, stack, ligand_features, tmp_path):
         from bindra.ibam.plots import plot_residue_atom_heatmap
 
-        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        export = export_ibam(_fused(stack, len(ligand_features.token_types)), ligand_features)
         written = plot_residue_atom_heatmap(export, tmp_path / "heatmap")
         assert set(written) == {"pdf", "svg"}
         assert all(path.exists() and path.stat().st_size > 0 for path in written.values())
@@ -475,7 +481,7 @@ class TestPlots:
     def test_a_600_dpi_png_is_optional(self, stack, ligand_features, tmp_path):
         from bindra.ibam.plots import FigureStyle, plot_residue_atom_heatmap
 
-        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        export = export_ibam(_fused(stack, len(ligand_features.token_types)), ligand_features)
         written = plot_residue_atom_heatmap(
             export, tmp_path / "heatmap", style=FigureStyle(write_png=True)
         )
@@ -492,7 +498,7 @@ class TestPlots:
     ):
         from bindra.ibam.plots import plot_residue_atom_heatmap
 
-        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        export = export_ibam(_fused(stack, len(ligand_features.token_types)), ligand_features)
         for view in ("atom", "token"):
             written = plot_residue_atom_heatmap(
                 export, tmp_path / view, view=view
@@ -505,7 +511,7 @@ class TestPlots:
         """Not only in the metadata: a figure gets separated from its sidecar."""
         from bindra.ibam.plots import plot_residue_atom_heatmap
 
-        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        export = export_ibam(_fused(stack, len(ligand_features.token_types)), ligand_features)
         written = plot_residue_atom_heatmap(export, tmp_path / "h", view="atom")
         text = written["svg"].read_text(encoding="utf-8")
         assert "DERIVED" in text
@@ -516,7 +522,7 @@ class TestPlots:
     ):
         from bindra.ibam.plots import IBAMPlotError, plot_residue_atom_heatmap
 
-        num_tokens = ligand_features.num_atoms
+        num_tokens = len(ligand_features.token_types)
         torch.manual_seed(3)
         fused = stack(
             torch.randn(1, 400, 32), torch.randn(1, num_tokens, 32),
@@ -531,7 +537,7 @@ class TestPlots:
     ):
         from bindra.ibam.plots import plot_residue_profile
 
-        num_tokens = ligand_features.num_atoms
+        num_tokens = len(ligand_features.token_types)
         torch.manual_seed(3)
         fused = stack(
             torch.randn(1, 400, 32), torch.randn(1, num_tokens, 32),
@@ -548,7 +554,7 @@ class TestPlots:
         from bindra.ibam.plots import plot_molecule_contributions
 
         smiles = ligand_features.molecule_id
-        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        export = export_ibam(_fused(stack, len(ligand_features.token_types)), ligand_features)
         written = plot_molecule_contributions(export, smiles, tmp_path / "mol")
         assert written["svg"].exists()
         assert "contact map" in written["svg"].read_text(encoding="utf-8")
@@ -558,7 +564,7 @@ class TestPlots:
     ):
         from bindra.ibam.plots import IBAMPlotError, plot_molecule_contributions
 
-        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        export = export_ibam(_fused(stack, len(ligand_features.token_types)), ligand_features)
         with pytest.raises(IBAMPlotError, match="not the same molecule"):
             plot_molecule_contributions(export, "CCO", tmp_path / "wrong")
 
@@ -567,7 +573,7 @@ class TestPlots:
     ):
         from bindra.ibam.plots import IBAMPlotError, plot_molecule_contributions
 
-        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        export = export_ibam(_fused(stack, len(ligand_features.token_types)), ligand_features)
         broken = IBAMExport(
             **{
                 **{f: getattr(export, f) for f in export.__dataclass_fields__},
@@ -585,7 +591,7 @@ class TestPlots:
         from bindra.ibam.plots import plot_all
 
         export = export_ibam(
-            _fused(stack, ligand_features.num_atoms),
+            _fused(stack, len(ligand_features.token_types)),
             ligand_features,
             residue_positions=torch.arange(100, 107),
         )
@@ -607,7 +613,7 @@ class TestPlots:
         from bindra.ibam.plots import plot_residue_atom_heatmap
 
         export = export_ibam(
-            _fused(stack, ligand_features.num_atoms),
+            _fused(stack, len(ligand_features.token_types)),
             ligand_features,
             policy=AggregationPolicy(renormalize_physical=True),
         )
@@ -627,14 +633,35 @@ class TestResidueScoresAreNotConstantByConstruction:
     it is the one that can answer "which residues does the model look at".
     """
 
-    def test_per_residue_really_is_constant(self, stack, ligand_features):
-        """The premise. If this ever fails, the rest of this class is moot."""
-        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
-        assert np.allclose(export.per_residue, 1.0, atol=1e-5)
-        assert export.per_residue.std() < 1e-5
+    def test_per_residue_is_still_not_a_ranking_signal(self, stack, ligand_features):
+        """The premise, restated for an arm with non-physical tokens.
+
+        ``per_residue`` sums p2l over **physical** tokens. For an arm where
+        every token is an atom that is exactly 1.0 for every residue, so it
+        ranks nothing. With LiGhT it is no longer identically 1 -- the two
+        knowledge nodes absorb a share of each softmax row -- but what it now
+        measures is how much of a residue's attention went to atoms rather than
+        to the fingerprint and descriptor nodes. That is a property of the
+        knowledge conditioning, not a statement about which residues matter, so
+        it is still the wrong thing to rank by. ``residue_salience``, built from
+        l2p, remains the signal ``top_residues`` uses.
+        """
+        export = export_ibam(_fused(stack, len(ligand_features.token_types)), ligand_features)
+        physical = sum(1 for t in export.token_types if t in ("atom", "bond"))
+        assert physical < len(export.token_types)  # knowledge nodes present
+        assert not np.allclose(export.per_residue, 1.0, atol=1e-5)
+        assert np.all(export.per_residue < 1.0)
+        assert export.residue_salience is not None
+        # It varies, but far less than the signal that is meant to rank, and
+        # for a reason unrelated to which residues matter.
+        salience = export.residue_salience
+        assert (
+            export.per_residue.std() / export.per_residue.mean()
+            < salience.std() / salience.mean()
+        )
 
     def test_the_ligand_to_protein_direction_is_exported(self, stack, ligand_features):
-        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        export = export_ibam(_fused(stack, len(ligand_features.token_types)), ligand_features)
         assert export.token_residue is not None
         assert export.residue_salience is not None
         assert export.token_residue.shape == (
@@ -644,15 +671,15 @@ class TestResidueScoresAreNotConstantByConstruction:
 
     def test_its_rows_normalise_over_residues_not_atoms(self, stack, ligand_features):
         """Which is exactly why summing it per residue says something."""
-        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        export = export_ibam(_fused(stack, len(ligand_features.token_types)), ligand_features)
         assert np.allclose(export.token_residue.sum(axis=1), 1.0, atol=1e-5)
 
     def test_the_salience_varies_across_residues(self, stack, ligand_features):
-        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        export = export_ibam(_fused(stack, len(ligand_features.token_types)), ligand_features)
         assert export.residue_salience.std() > 1e-4
 
     def test_ranking_uses_the_salience_and_says_so(self, stack, ligand_features):
-        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        export = export_ibam(_fused(stack, len(ligand_features.token_types)), ligand_features)
         assert export.residue_scores_are_informative
         assert np.allclose(export.residue_scores, export.residue_salience)
         scores = [score for _, score in export.top_residues(5)]
@@ -663,7 +690,7 @@ class TestResidueScoresAreNotConstantByConstruction:
         self, stack, ligand_features
     ):
         """Old exports still load; they just must not claim to rank anything."""
-        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        export = export_ibam(_fused(stack, len(ligand_features.token_types)), ligand_features)
         legacy = IBAMExport(
             **{
                 **{f: getattr(export, f) for f in export.__dataclass_fields__},
@@ -677,7 +704,7 @@ class TestResidueScoresAreNotConstantByConstruction:
     def test_the_metadata_names_which_direction_the_scores_came_from(
         self, stack, ligand_features
     ):
-        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        export = export_ibam(_fused(stack, len(ligand_features.token_types)), ligand_features)
         metadata = export.metadata()
         assert metadata["has_ligand_to_protein"] is True
         assert metadata["residue_scores_are_informative"] is True
@@ -685,7 +712,7 @@ class TestResidueScoresAreNotConstantByConstruction:
 
     def test_a_window_carries_both_directions_through(self, stack, ligand_features):
         export = export_ibam(
-            _fused(stack, ligand_features.num_atoms),
+            _fused(stack, len(ligand_features.token_types)),
             ligand_features,
             residue_positions=torch.arange(100, 107),
         )
@@ -695,7 +722,7 @@ class TestResidueScoresAreNotConstantByConstruction:
         assert np.allclose(window.residue_salience, export.residue_salience[2:5])
 
     def test_the_arrays_round_trip_to_disk(self, stack, ligand_features, tmp_path):
-        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        export = export_ibam(_fused(stack, len(ligand_features.token_types)), ligand_features)
         written = export.write(tmp_path / "e")
         loaded = np.load(written["matrices"])
         assert np.allclose(loaded["residue_salience"], export.residue_salience)
@@ -707,7 +734,7 @@ class TestResidueScoresAreNotConstantByConstruction:
         """Burned into the figure, because that is where it gets misread."""
         from bindra.ibam.plots import plot_residue_profile
 
-        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        export = export_ibam(_fused(stack, len(ligand_features.token_types)), ligand_features)
         legacy = IBAMExport(
             **{
                 **{f: getattr(export, f) for f in export.__dataclass_fields__},
@@ -725,7 +752,7 @@ class TestResidueScoresAreNotConstantByConstruction:
     ):
         from bindra.ibam.plots import plot_residue_profile
 
-        export = export_ibam(_fused(stack, ligand_features.num_atoms), ligand_features)
+        export = export_ibam(_fused(stack, len(ligand_features.token_types)), ligand_features)
         written = plot_residue_profile(export, tmp_path / "fine")
         text = written["svg"].read_text(encoding="utf-8")
         assert "constant by construction" not in text
