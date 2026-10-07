@@ -170,6 +170,32 @@ def _relation(processed: Path):
     return table, index
 
 
+def _sealed_panel_observations(benchmarks: Path) -> set[str]:
+    """Observation ids in the three affinity-shaped locked panels.
+
+    Read from each panel's ``queries.parquet``, which is the unsealed half --
+    no label is opened and no access log is touched.
+    """
+    import pandas as pd
+
+    panels = (
+        "panel_strict_future",
+        "panel_repeated_measurement",
+        "panel_reimport_control",
+    )
+    reserved: set[str] = set()
+    for name in panels:
+        path = benchmarks / name / "queries.parquet"
+        if not path.exists():
+            continue
+        frame = pd.read_parquet(path)
+        column = next(
+            (c for c in frame.columns if "observation" in c.lower()), frame.columns[0]
+        )
+        reserved |= set(frame[column].astype(str))
+    return reserved
+
+
 def cmd_build(args) -> int:
     from bindra.config.profiles import get_profile
     from bindra.data.splits import (
@@ -265,6 +291,20 @@ def cmd_build(args) -> int:
         Regime.TEMPORAL.value,
     ]
 
+    # Observation ids belonging to the three affinity-shaped sealed panels.
+    reserved_ids = _sealed_panel_observations(Path(args.benchmarks))
+    if reserved_ids:
+        print(
+            f"[{OK}] {len(reserved_ids):,} sealed-panel observations will be held "
+            "out of every non-temporal regime"
+        )
+        inputs["reserved_panel_observations"] = len(reserved_ids)
+    else:
+        print(
+            f"[{INFO}] no sealed panels found under {args.benchmarks}; nothing "
+            "reserved, and only a temporal model will be able to score them"
+        )
+
     failures = 0
     for regime in requested:
         print()
@@ -287,6 +327,34 @@ def cmd_build(args) -> int:
         else:
             print(f"[{FAIL}] unknown regime {regime!r}")
             return 2
+
+        # The sealed panels are held out of EVERY regime, not just the temporal
+        # one that defines them. Without this a panel is scorable only by a
+        # temporally-trained model, because every other regime draws its training
+        # set at random across dates and swallows most of the panel: measured at
+        # 60.2%/100.0%/67.7% for random_pair and 66.4%/68.8%/67.6% for
+        # cold_target. A benchmark that only one regime can use is not a
+        # benchmark for the others, and the generalization regimes are exactly
+        # the ones whose panel numbers would be most worth having.
+        #
+        # Reserved into quarantine rather than into test: these observations
+        # belong to a locked panel with its own access log, and routing them into
+        # a regime's test partition would let an ordinary `--partition test` run
+        # read labels the panel lock is there to ration.
+        if regime != Regime.TEMPORAL.value and reserved_ids:
+            moved = 0
+            for observation_id in list(assignment):
+                if (
+                    observation_id in reserved_ids
+                    and assignment[observation_id] != Partition.QUARANTINE.value
+                ):
+                    assignment[observation_id] = Partition.QUARANTINE.value
+                    moved += 1
+            if moved:
+                print(
+                    f"    reserved {moved:,} sealed-panel observations into "
+                    "quarantine, so this regime can be scored on the panels"
+                )
 
         # Each regime is audited at its OWN grouping threshold; auditing the 60%
         # regime at 40% would flag every homologue the regime deliberately permits.
