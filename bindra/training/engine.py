@@ -743,18 +743,24 @@ class Trainer:
         if self.config.verbose and loss is not None:
             share = 100 * waiting / max(1e-9, elapsed)
             parts = [
-                f"ex {float(loss.exact_loss):.4f}",
-                f"cen {float(loss.censored_loss):.4f}",
-                f"aux {float(loss.auxiliary_loss):.4f}",
+                f"ex {loss.exact_loss.detach().item():.4f}",
+                f"cen {loss.censored_loss.detach().item():.4f}",
+                f"aux {loss.auxiliary_loss.detach().item():.4f}",
             ]
             if grad_norm is not None:
-                clipped = "*" if float(grad_norm) > self.config.grad_clip else " "
-                parts.append(f"|g| {float(grad_norm):.3f}{clipped}")
+                norm = float(grad_norm.detach() if hasattr(grad_norm, "detach") else grad_norm)
+                clipped = "*" if norm > self.config.grad_clip else " "
+                parts.append(f"|g| {norm:.3f}{clipped}")
             if batch is not None:
+                # Asked of the batch rather than assumed: the arm owns its own
+                # batch type, and a diagnostic must never be the thing that
+                # ends a training run.
+                tokens = getattr(batch.ligands, "total_tokens", None)
+                size = "?" if tokens is None else f"{tokens}"
                 parts.append(
                     f"b {batch.size}x{batch.padded_residues}"
                     f" pad {batch.padding_fraction:.2f}"
-                    f" atoms {batch.ligands.total_atoms}"
+                    f" tok {size}"
                 )
             parts.append(f"wait {share:.0f}%")
             detail = NEWLINE + "        " + "  ".join(parts)

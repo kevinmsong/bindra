@@ -189,6 +189,32 @@ class TestPartitionDiscipline:
         assert not offending, f"the engine imports sealed-label machinery: {offending}"
 
 
+class TestVerboseLogging:
+    """The `-v` path, which had no coverage and so broke silently.
+
+    Removing the GAT arm changed the ligand batch type, and the step logger
+    still asked it for `total_atoms`. Nothing caught it: the logger is only
+    reached with `--log-every` small and `verbose` on, and no test did that. The
+    run died several minutes in, at the first logged step, with the model and
+    the data both working fine.
+    """
+
+    def test_a_verbose_step_logs_without_touching_a_missing_attribute(self, capsys):
+        trainer = Trainer(
+            _model(),
+            TrainingConfig(epochs=1, log_every=1, patience=0, ema_decay=0.0,
+                           verbose=True),
+        )
+        trainer.fit(_FakeLoader([_batch(seed=0)]))
+        printed = capsys.readouterr().out
+        assert "tok " in printed, printed
+        assert "wait" in printed
+        # The label is 'tok', not 'atoms': a LiGhT token is a bond, an unbonded
+        # atom, or a knowledge node, and none of those is an atom count.
+        assert "atoms" not in printed
+
+
+
 class TestTraining:
     def test_a_short_run_reduces_the_loss(self):
         batches = [_batch(seed=i) for i in range(4)]

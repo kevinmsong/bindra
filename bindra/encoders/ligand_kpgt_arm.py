@@ -111,6 +111,16 @@ class KPGTLigandBatch:
         return self.graphs.num_graphs
 
     @property
+    def total_tokens(self) -> int:
+        """Triplet nodes in the batch, knowledge nodes included.
+
+        Named ``tokens`` rather than ``atoms``: for this arm a token is a bond,
+        an unbonded atom, or a knowledge node, and none of those is an atom
+        count. The training logger prints it as a batch-shape diagnostic.
+        """
+        return self.graphs.num_nodes
+
+    @property
     def device(self) -> torch.device:
         return self.fingerprints.device
 
