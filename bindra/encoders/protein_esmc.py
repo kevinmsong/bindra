@@ -35,7 +35,7 @@ two are hazards in the current ``esm`` package.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import importlib.util
 from typing import Any, Sequence
@@ -472,6 +472,122 @@ class ESMCProteinEncoder:
             expected_residues=len(segment),
         )
 
+    def _merge_windows(self, sequence: str, encode_window) -> torch.Tensor:
+        """Average each residue's representations across the windows covering it.
+
+        Shared by :meth:`encode` and :meth:`encode_truncated` so the two cannot
+        drift apart in windowing, coverage checking or merge order.
+        """
+        plan = plan_windows(len(sequence), self.window_size, self.overlap)
+        accumulator: torch.Tensor | None = None
+        counts = torch.zeros(len(sequence), 1, dtype=torch.float32)
+
+        for start, end in plan.windows:
+            window_features = encode_window(sequence[start:end]).cpu()
+            if accumulator is None:
+                dim = window_features.shape[1]
+                accumulator = torch.zeros(len(sequence), dim, dtype=torch.float32)
+            accumulator[start:end] += window_features
+            counts[start:end] += 1.0
+
+        assert accumulator is not None
+        if not bool((counts > 0).all()):
+            uncovered = int((counts == 0).sum().item())
+            raise ProteinEncoderError(
+                f"{uncovered} residues received no representation; the window plan is wrong"
+            )
+        return accumulator / counts
+
+    def _encode_window_truncated(self, segment: str, n_tail: int) -> torch.Tensor:
+        """Residue states as they enter the last ``n_tail`` blocks.
+
+        Captured with a forward pre-hook rather than by re-implementing the
+        stack's forward. Re-implementing it would mean reproducing the mask,
+        rotary and residual handling exactly, and a divergence there would be
+        silent -- the features would simply be slightly wrong. A hook runs the
+        model's own code path and takes the tensor it actually passes.
+        """
+        blocks = self.transformer_blocks()
+        if not 1 <= n_tail <= len(blocks):
+            raise ProteinEncoderError(
+                f"n_tail must be in [1, {len(blocks)}], got {n_tail}"
+            )
+        token_ids = self.tokenizer.encode(segment)
+        special_mask = self.tokenizer.get_special_tokens_mask(
+            token_ids, already_has_special_tokens=True
+        )
+        tokens = torch.tensor([token_ids], dtype=torch.long, device=self.device)
+
+        captured: list[torch.Tensor] = []
+
+        def grab(_module, args):
+            captured.append(args[0].detach().clone().float())
+
+        handle = blocks[-n_tail].register_forward_pre_hook(grab)
+        try:
+            with torch.inference_mode():
+                self.model(tokens)
+        finally:
+            handle.remove()
+        if not captured:
+            raise ProteinEncoderError(
+                "the pre-hook on the tail block never fired; the stack was not "
+                "the one located by transformer_blocks()"
+            )
+        return strip_special_tokens(
+            captured[0][0],
+            token_ids,
+            special_mask,
+            expected_residues=len(segment),
+        )
+
+    def encode_truncated(self, sequence: str, n_tail: int = 1) -> ProteinFeatures:
+        """Like :meth:`encode`, but stopping before the last ``n_tail`` blocks.
+
+        These are the features a **cached** fine-tuning regime stores: blocks
+        below the tail are frozen, so their output stays a deterministic
+        function of the sequence and remains cacheable, while the tail trains
+        live on top. That is what makes unfreezing affordable -- one block
+        forward per protein per step instead of thirty-six.
+
+        **The window merge moves.** :meth:`encode` averages each residue's
+        representations across windows *after* the whole stack; this averages
+        them before the tail, and the tail is not linear. For a sequence that
+        fits one window -- which is 10,559 of this corpus's 10,820 constructs --
+        the two are identical. For the 261 that do not, they differ, and the
+        difference is measured rather than assumed: see ``docs/STATUS.md``.
+        """
+        if not sequence or sequence != sequence.strip().upper():
+            raise ProteinEncoderError(
+                "sequence must be non-empty and canonical (stripped, upper-case)"
+            )
+        residue_features = self._merge_windows(
+            sequence, lambda seg: self._encode_window_truncated(seg, n_tail)
+        )
+        output_dim = int(residue_features.shape[1])
+        metadata = self.metadata(output_dim)
+        # The truncation is part of the feature identity. Without it in the key
+        # a truncated cache and a full one are indistinguishable, and a run
+        # would silently train a tail on features that already went through it.
+        metadata = replace(
+            metadata,
+            feature_schema_version=f"{metadata.feature_schema_version}+tail{n_tail}",
+            preprocessing_policy=(
+                f"{metadata.preprocessing_policy}; truncated before the last "
+                f"{n_tail} block(s), pre-final-norm"
+            ),
+        )
+        if self.precision == "bfloat16":
+            residue_features = residue_features.to(torch.bfloat16)
+        return ProteinFeatures(
+            residue_features=residue_features,
+            residue_mask=torch.ones(len(sequence), dtype=torch.bool),
+            residue_indices=torch.arange(len(sequence), dtype=torch.long),
+            sequence_hash=sequence_digest(sequence),
+            encoder_metadata=metadata,
+            sequence_length=len(sequence),
+        )
+
     def encode(self, sequence: str) -> ProteinFeatures:
         """Encode one sequence into ``ProteinFeatures``.
 
@@ -497,26 +613,7 @@ class ESMCProteinEncoder:
                 "bindra.data.bindingdb.proteins.canonical_sequence first."
             )
 
-        plan = plan_windows(len(sequence), self.window_size, self.overlap)
-
-        accumulator: torch.Tensor | None = None
-        counts = torch.zeros(len(sequence), 1, dtype=torch.float32)
-
-        for start, end in plan.windows:
-            window_features = self._encode_window(sequence[start:end]).cpu()
-            if accumulator is None:
-                dim = window_features.shape[1]
-                accumulator = torch.zeros(len(sequence), dim, dtype=torch.float32)
-            accumulator[start:end] += window_features
-            counts[start:end] += 1.0
-
-        assert accumulator is not None
-        if not bool((counts > 0).all()):
-            uncovered = int((counts == 0).sum().item())
-            raise ProteinEncoderError(
-                f"{uncovered} residues received no representation; the window plan is wrong"
-            )
-        residue_features = accumulator / counts
+        residue_features = self._merge_windows(sequence, self._encode_window)
 
         output_dim = int(residue_features.shape[1])
         if "600M" in self.checkpoint.upper() and output_dim != EXPECTED_ESMC_600M_DIM:
