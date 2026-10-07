@@ -47,6 +47,11 @@ from bindra.encoders.ligand import (
     segment_softmax,
     segment_sum,
 )
+from bindra.encoders.ligand_arm import (
+    FusionTokens,
+    LigandArmError,
+    pad_by_destination,
+)
 from bindra.encoders.ligand_graph import (
     ATOM_FEATURE_DIM,
     BOND_FEATURE_DIM,
@@ -94,6 +99,16 @@ class GATConfig:
     @property
     def head_dim(self) -> int:
         return self.hidden_dim // self.num_heads
+
+    @property
+    def token_dim(self) -> int:
+        """Width of one token state. For this arm a token is one atom.
+
+        Named the same on every arm's config so ``BindraConfig`` can size its
+        adapters without knowing which arm it holds; KPGT calls the same
+        quantity ``d_g_feats``.
+        """
+        return self.hidden_dim
 
     @property
     def graph_dim(self) -> int:
@@ -216,6 +231,43 @@ class GATLigandEncoderModule(nn.Module):
         if return_attention:
             result["attention"] = attention
         return result
+
+    def collate_smiles(self, smiles: Sequence[str]) -> BatchedGraphs:
+        """Featurize and collate into this arm's batch type.
+
+        ``collate_graphs`` computes the padding map in numpy, so the batch that
+        comes back already carries ``token_destination`` and ``max_atoms`` and
+        :meth:`encode_for_fusion` needs no device-to-host stall for the width.
+        """
+        return collate_graphs([featurize_molecule(text) for text in smiles])
+
+    def encode_for_fusion(
+        self, batch: BatchedGraphs, *, return_attention: bool = False
+    ) -> FusionTokens:
+        """Dense, masked atom tokens plus the molecule readout.
+
+        Every token this arm emits is one real atom, so the mask marks exactly
+        the collated atoms and nothing is filtered out. The KPGT arm is where
+        that stops being true.
+        """
+        if batch.token_destination is None or not batch.max_atoms:
+            raise LigandArmError(
+                "this batch carries no token_destination; build it with "
+                "collate_graphs so the padding map is computed on the CPU"
+            )
+        encoded = self.forward(batch, return_attention=return_attention)
+        tokens, mask = pad_by_destination(
+            encoded["token_states"],  # type: ignore[arg-type]
+            batch.token_destination,
+            num_graphs=batch.num_graphs,
+            width=batch.max_atoms,
+        )
+        return FusionTokens(
+            tokens=tokens,
+            token_mask=mask,
+            graph_states=encoded["graph_states"],  # type: ignore[arg-type]
+            attention=tuple(encoded.get("attention", ())),  # type: ignore[arg-type]
+        )
 
     def _readout(
         self, states: torch.Tensor, batch_index: torch.Tensor, num_graphs: int

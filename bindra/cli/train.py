@@ -66,6 +66,54 @@ def _provenance(processed: Path, split_directory: Path, protein_metadata, ligand
     }
 
 
+def _ligand_config(args):
+    """The arm's own config, from the arm-specific flags.
+
+    Each arm reads only its own flags, so a GAT width silently applying to a
+    KPGT run is not expressible. Both are built here rather than in ``cmd_fit``
+    so the loaders and the model can be handed the same object.
+    """
+    if args.ligand_arm == "gat":
+        from bindra.encoders.ligand_gat import GATConfig
+
+        return GATConfig(
+            hidden_dim=args.ligand_dim, num_layers=args.ligand_layers, num_heads=8
+        )
+    from bindra.encoders.ligand_kpgt import KPGTConfig
+
+    # LiGhT-mini, and only LiGhT-mini. The published 91.9M `base` shape was
+    # selectable here and is not any more: without `base.pth` it can only be
+    # partial fine-tuning over randomly initialised weights, which `cmd_fit`
+    # refused anyway, so the flag's sole reachable outcome was an error. The
+    # configuration itself remains expressible in library code -- `KPGTConfig()`
+    # still defaults to the published shape, and `load_pretrained` still loads
+    # the checkpoint with `strict=True` -- because that is what the port's
+    # verification rests on, and it is what this returns to the moment the
+    # weights arrive.
+    return KPGTConfig.mini()
+
+
+def _ligand_metadata(ligand, module):
+    """Encoder identity for provenance, from whichever arm is installed.
+
+    Routed through each arm's own encoder class so the recorded
+    ``feature_schema_version``, ``revision`` and preprocessing policy are the
+    arm's own rather than a generic summary. Every results table reads this to
+    say which arm produced it.
+    """
+    from bindra.encoders.ligand_gat import GATConfig, GATLigandEncoder
+
+    if isinstance(ligand, GATConfig):
+        return GATLigandEncoder(ligand, module=module).metadata()
+
+    from bindra.encoders.ligand_kpgt import KPGTLigandEncoder
+
+    checkpoint = getattr(module, "pretrained_checkpoint", None) or "untrained"
+    return KPGTLigandEncoder(
+        ligand, module=module.module, checkpoint=checkpoint
+    ).metadata()
+
+
 def cmd_fit(args) -> int:
     import os
 
@@ -89,7 +137,7 @@ def cmd_fit(args) -> int:
     import torch
 
     from bindra.data.batching import BatchingPolicy, PairDataset, PairLoader
-    from bindra.encoders.ligand_gat import GATConfig, GATLigandEncoder
+    from bindra.encoders.ligand_featurizers import LigandBatchBuilder
     from bindra.features.cache import ProteinFeatureCache
     from bindra.heads.affinity import AffinityHeadConfig
     from bindra.model import BindraConfig, BindraModel
@@ -131,9 +179,20 @@ def cmd_fit(args) -> int:
         flush=True,
     )
 
-    print(f"[{INFO}] building loaders (one pass over the corpus)...", flush=True)
+    # The ligand config is built before the loaders, not after, because the
+    # loaders featurize for an arm and must be handed the same config object the
+    # model is built from. Deriving the featurizer from a separate flag is how a
+    # run ends up encoding GAT graphs with a KPGT arm.
+    ligand = _ligand_config(args)
+    ligand_builder = LigandBatchBuilder.for_config(ligand)
+    print(
+        f"[{INFO}] building loaders for the {ligand_builder.arm!r} ligand arm "
+        "(one pass over the corpus)...",
+        flush=True,
+    )
     train = PairDataset(
-        processed, split_directory, "train", protein_cache=cache, limit=args.limit
+        processed, split_directory, "train", protein_cache=cache, limit=args.limit,
+        ligand_builder=ligand_builder,
     )
     validation = PairDataset(
         processed,
@@ -141,6 +200,7 @@ def cmd_fit(args) -> int:
         "val",
         protein_cache=cache,
         limit=None if args.limit is None else max(1, args.limit // 8),
+        ligand_builder=ligand_builder,
     )
     policy = BatchingPolicy(
         residue_budget=args.residue_budget, max_pairs=args.max_pairs, seed=args.seed
@@ -158,9 +218,6 @@ def cmd_fit(args) -> int:
     )
     print(f"[{INFO}] batch shape: {train_loader.describe()}", flush=True)
 
-    ligand = GATConfig(
-        hidden_dim=args.ligand_dim, num_layers=args.ligand_layers, num_heads=8
-    )
     config = BindraConfig(
         protein_dim=protein_metadata.output_dim,
         ligand=ligand,
@@ -174,7 +231,34 @@ def cmd_fit(args) -> int:
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"[{OK}] model: {trainable:,} trainable parameters", flush=True)
 
-    ligand_metadata = GATLigandEncoder(ligand, module=model.ligand_encoder).metadata()
+    # Neither guard is reachable from the flags any more: the CLI builds only
+    # LiGhT-mini, which trains every weight it has. They are kept because a
+    # config built in library code still can reach them, and because the second
+    # one describes a failure that trains and reports a normal loss curve.
+    if getattr(model.ligand_encoder, "frozen_and_untrained", lambda: False)():
+        print(
+            f"[{FAIL}] the {ligand_builder.arm!r} arm has no trainable layers and "
+            "no pretrained weights, so the ligand side is a fixed random "
+            "projection and cannot learn. Build it with KPGTConfig.mini(), or "
+            "load base.pth (see docs/STATUS.md)",
+            flush=True,
+        )
+        return 2
+
+    pinned = getattr(model.ligand_encoder, "partially_frozen_at_random", lambda: 0)()
+    if pinned:
+        print(
+            f"[{FAIL}] {pinned:,} parameters of the {ligand_builder.arm!r} arm are "
+            "frozen at RANDOM initialisation, because partial fine-tuning was "
+            "requested without a pretrained checkpoint. The trailing blocks "
+            "would spend training compensating for a fixed random embedding, "
+            "and the run would look normal throughout. Build it with "
+            "KPGTConfig.mini(), or load base.pth (see docs/STATUS.md)",
+            flush=True,
+        )
+        return 2
+
+    ligand_metadata = _ligand_metadata(ligand, model.ligand_encoder)
     provenance = _provenance(processed, split_directory, protein_metadata, ligand_metadata)
     provenance["model"] = config.to_dict()
     provenance["batching"] = policy.to_dict()
@@ -241,6 +325,16 @@ def build_parser():
     parser.add_argument("--ema", type=float, default=0.999)
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--model-dim", type=int, default=256)
+    parser.add_argument(
+        "--ligand-arm", default="gat", choices=("gat", "kpgt"),
+        help="Which ligand encoder to train. 'gat' is what the existing runs "
+             "used. 'kpgt' builds LiGhT-mini: a 2,232,352-parameter line-graph "
+             "transformer trained from scratch, sized against the GAT arm so "
+             "the comparison is about tokens and not capacity. It reports as "
+             "'ligand_light_mini', not KPGT, because it has the architecture "
+             "and not the pre-training; see docs/STATUS.md.",
+    )
+    #: GAT only.
     parser.add_argument("--ligand-dim", type=int, default=256)
     parser.add_argument("--ligand-layers", type=int, default=4)
     parser.add_argument("--fusion-layers", type=int, default=2)

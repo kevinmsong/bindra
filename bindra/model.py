@@ -43,13 +43,15 @@ from typing import Mapping, Sequence
 import torch
 from torch import nn
 
-from bindra.encoders.ligand_gat import GATConfig, GATLigandEncoderModule
-from bindra.encoders.ligand_graph import (
-    BatchedGraphs,
-    MolecularGraph,
-    collate_graphs,
-    featurize_molecule,
+from bindra.encoders.ligand_arm import (
+    FusionTokens,
+    LigandArm,
+    LigandArmError,
+    build_ligand_arm,
+    pad_by_destination,
 )
+from bindra.encoders.ligand_gat import GATConfig
+from bindra.encoders.ligand_graph import BatchedGraphs
 from bindra.features.types import EncoderMetadata
 from bindra.fusion.adapters import AdapterConfig, SharedAdapters, masked_mean
 from bindra.fusion.cross_attention import (
@@ -71,16 +73,15 @@ def pad_token_states(
 
     The ligand encoder works on a concatenated batch, because molecule sizes span
     three orders of magnitude and padding there would waste most of the work.
-    Cross-attention needs a dense axis, so the padding happens here, once, at the
-    boundary -- and the mask it returns is what keeps the padding out of the
-    attention.
+    Cross-attention needs a dense axis, so the padding happens at the boundary --
+    and the mask it returns is what keeps the padding out of the attention.
 
-    Written as two scatters rather than a loop over molecules. The loop version
-    was measured at **190 microseconds per molecule** -- 49 ms for a batch of 256,
-    more than the entire rest of the forward pass -- because
-    ``BatchedGraphs.graph_slice`` calls ``int()`` on a CUDA tensor, forcing a
-    device-to-host synchronisation twice per molecule. Nothing about the work is
-    expensive; it was all launch latency and stalls.
+    Kept as a function on ``BatchedGraphs`` because callers and tests use it, but
+    the padding itself now lives in
+    :func:`bindra.encoders.ligand_arm.pad_by_destination`, and each **arm** owns
+    the decision of which tokens to pad. This one pads every token, which is
+    correct here and wrong for KPGT: that arm's knowledge nodes are not atoms
+    and must not occupy a row in the attention map.
     """
     num_graphs = batch.num_graphs
     if num_graphs == 0:
@@ -92,14 +93,12 @@ def pad_token_states(
             "this batch carries no token_destination; build it with "
             "collate_graphs so the padding map is computed on the CPU"
         )
-    width = batch.max_atoms
-    destination = batch.token_destination
-
-    padded = states.new_zeros(num_graphs * width, states.shape[-1])
-    padded.index_copy_(0, destination, states)
-    mask = torch.zeros(num_graphs * width, dtype=torch.bool, device=states.device)
-    mask.index_fill_(0, destination, True)
-    return padded.view(num_graphs, width, -1), mask.view(num_graphs, width)
+    return pad_by_destination(
+        states,
+        batch.token_destination,
+        num_graphs=num_graphs,
+        width=batch.max_atoms,
+    )
 
 
 @dataclass(frozen=True)
@@ -110,21 +109,36 @@ class BindraConfig:
     whichever protein encoder populated the cache. Everything else is derived, so
     a mismatch between the ligand encoder's width and the adapter's input is not
     expressible.
+
+    ``ligand`` selects the **arm**: a ``GATConfig`` or a ``KPGTConfig``. The
+    widths are read through ``token_dim``/``graph_dim``, which both configs
+    expose, so this class never learns either arm's internal field names. The
+    default stays ``GATConfig`` -- the trained checkpoints are GAT, and a
+    default that silently changed which encoder a run used would make a results
+    table ambiguous about what produced it.
     """
 
     protein_dim: int
-    ligand: GATConfig = field(default_factory=GATConfig)
+    ligand: object = field(default_factory=GATConfig)
     model_dim: int = 256
     cross_attention_layers: int = 2
     cross_attention_heads: int = 8
     dropout: float = 0.1
     head: AffinityHeadConfig = field(default_factory=AffinityHeadConfig)
 
+    def __post_init__(self) -> None:
+        for name in ("token_dim", "graph_dim", "to_dict"):
+            if not hasattr(self.ligand, name):
+                raise BindraModelError(
+                    f"ligand config {type(self.ligand).__name__} has no {name!r}; "
+                    "an arm config must expose token_dim, graph_dim and to_dict"
+                )
+
     def adapter_config(self) -> AdapterConfig:
         return AdapterConfig(
             protein_dim=self.protein_dim,
-            ligand_dim=self.ligand.hidden_dim,
-            ligand_graph_dim=self.ligand.graph_dim,
+            ligand_dim=self.ligand.token_dim,  # type: ignore[attr-defined]
+            ligand_graph_dim=self.ligand.graph_dim,  # type: ignore[attr-defined]
             model_dim=self.model_dim,
             dropout=self.dropout,
         )
@@ -149,7 +163,8 @@ class BindraConfig:
             "cross_attention_layers": self.cross_attention_layers,
             "cross_attention_heads": self.cross_attention_heads,
             "dropout": self.dropout,
-            "ligand": self.ligand.to_dict(),
+            "ligand": self.ligand.to_dict(),  # type: ignore[attr-defined]
+            "ligand_arm": type(self.ligand).__name__,
             "head": self.head.to_dict(),
             "pair_dim": self.pair_dim,
         }
@@ -161,13 +176,22 @@ class BindraOutput:
 
     ``fusion`` carries the unaveraged per-layer per-head attention. ``ligand_batch``
     is retained because mapping an attention weight back to an atom requires the
-    collation offsets, and recomputing them later risks a different answer.
+    collation offsets, and recomputing them later risks a different answer. Its
+    type is whatever the installed arm collates -- ``BatchedGraphs`` for GAT, a
+    ``KPGTLigandBatch`` for KPGT -- so a consumer must ask the arm rather than
+    assume atoms.
+
+    ``ligand_tokens`` carries the arm's own densified tokens and their mask.
+    iBAM needs the mask to know which columns of a cross-attention map are real,
+    and for the KPGT arm the token axis is already filtered: knowledge nodes
+    were dropped before fusion, so a column index there is not a triplet index.
     """
 
     prediction: AffinityPrediction
     fusion: FusionOutput
     pair_representation: torch.Tensor  # [B, 4 * model_dim]
-    ligand_batch: BatchedGraphs
+    ligand_batch: object
+    ligand_tokens: FusionTokens | None = None
     ligand_attention: tuple[torch.Tensor, ...] = ()
 
     @property
@@ -181,10 +205,20 @@ class BindraModel(nn.Module):
     def __init__(self, config: BindraConfig) -> None:
         super().__init__()
         self.config = config
-        self.ligand_encoder = GATLigandEncoderModule(config.ligand)
+        # Registered under this exact name, with the arm module itself and no
+        # wrapper level, because the trained checkpoints hold keys like
+        # ``ligand_encoder.input_projection.weight``. Interposing a wrapper here
+        # would rename every one of them and silently stop those checkpoints
+        # loading.
+        self.ligand_encoder: LigandArm = build_ligand_arm(config.ligand)
         self.adapters = SharedAdapters(config.adapter_config())
         self.fusion = CrossAttentionStack(config.cross_attention_config())
         self.heads = AffinityHeads(config.pair_dim, config.head)
+        if self.ligand_encoder.token_dim != config.ligand.token_dim:  # type: ignore[attr-defined]
+            raise BindraModelError(
+                f"arm reports token_dim {self.ligand_encoder.token_dim} but its "
+                f"config says {config.ligand.token_dim}"  # type: ignore[attr-defined]
+            )
 
     @classmethod
     def from_protein_metadata(
@@ -221,16 +255,16 @@ class BindraModel(nn.Module):
         iBAM asks for them explicitly."""
         self._validate(protein_features, protein_mask, ligand_batch)
         device = protein_features.device
-        if ligand_batch.atom_features.device != device:
+        if _ligand_device(ligand_batch) != device:
             ligand_batch = ligand_batch.to(device)
 
-        encoded = self.ligand_encoder(
+        encoded = self.ligand_encoder.encode_for_fusion(
             ligand_batch, return_attention=return_ligand_attention
         )
-        ligand_tokens, ligand_mask = pad_token_states(encoded["token_states"], ligand_batch)
+        ligand_tokens, ligand_mask = encoded.tokens, encoded.token_mask
 
         adapted = self.adapters(
-            protein_features, ligand_tokens, encoded["graph_states"]
+            protein_features, ligand_tokens, encoded.graph_states
         )
         fused = self.fusion(
             adapted["protein"],
@@ -256,15 +290,21 @@ class BindraModel(nn.Module):
             fusion=fused,
             pair_representation=pair,
             ligand_batch=ligand_batch,
-            ligand_attention=tuple(encoded.get("attention", ())),  # type: ignore[arg-type]
+            ligand_tokens=encoded,
+            ligand_attention=encoded.attention,
         )
 
     def _validate(
         self,
         protein_features: torch.Tensor,
         protein_mask: torch.Tensor,
-        ligand_batch: BatchedGraphs,
+        ligand_batch: object,
     ) -> None:
+        if not hasattr(ligand_batch, "num_graphs"):
+            raise BindraModelError(
+                f"ligand_batch {type(ligand_batch).__name__} has no num_graphs; "
+                "build it with the installed arm's collate_smiles"
+            )
         if protein_features.ndim != 3:
             raise BindraModelError(
                 f"protein_features must be [B, L, {self.config.protein_dim}], got "
@@ -286,10 +326,10 @@ class BindraModel(nn.Module):
                 f"protein_mask must be {protein_features.shape[:2]}, got "
                 f"{tuple(protein_mask.shape)}"
             )
-        if protein_features.shape[0] != ligand_batch.num_graphs:
+        if protein_features.shape[0] != ligand_batch.num_graphs:  # type: ignore[attr-defined]
             raise BindraModelError(
                 f"batch mismatch: {protein_features.shape[0]} proteins against "
-                f"{ligand_batch.num_graphs} molecules. Pairs must be aligned "
+                f"{ligand_batch.num_graphs} molecules. Pairs must be aligned "  # type: ignore[attr-defined]
                 "row-for-row; a silent mismatch here trains on wrong pairs"
             )
 
@@ -299,10 +339,40 @@ class BindraModel(nn.Module):
         protein_mask: torch.Tensor,
         smiles: Sequence[str],
     ) -> BindraOutput:
-        """Convenience path from SMILES, for inference and for small tests."""
-        graphs: list[MolecularGraph] = [featurize_molecule(text) for text in smiles]
-        batch = collate_graphs(graphs).to(protein_features.device)
-        return self(protein_features, protein_mask, batch, need_attention=True)
+        """Convenience path from SMILES, for inference and for small tests.
+
+        Featurization goes through the arm, because the batch type is the thing
+        that differs between arms and only the consumer can build one correctly.
+        For the KPGT arm this computes ~200 RDKit descriptors per molecule and
+        is correspondingly slow -- fine for inference and small tests, which is
+        all this path is for.
+        """
+        batch = self.ligand_encoder.collate_smiles(smiles)
+        return self(
+            protein_features,
+            protein_mask,
+            batch.to(protein_features.device),  # type: ignore[attr-defined]
+            need_attention=True,
+        )
+
+
+def _ligand_device(batch: object) -> torch.device:
+    """Where a ligand batch currently lives, whichever arm collated it.
+
+    ``BatchedGraphs`` exposes its tensors directly and has no ``device``
+    property; ``KPGTLigandBatch`` has one. Asked in that order so the GAT path
+    keeps working unchanged.
+    """
+    features = getattr(batch, "atom_features", None)
+    if features is not None:
+        return features.device
+    device = getattr(batch, "device", None)
+    if device is not None:
+        return device
+    raise LigandArmError(
+        f"cannot determine the device of a {type(batch).__name__}; a ligand "
+        "batch must expose atom_features or device"
+    )
 
 
 __all__ = [

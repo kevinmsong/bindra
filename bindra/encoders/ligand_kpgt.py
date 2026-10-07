@@ -67,6 +67,55 @@ from bindra.features.types import EncoderMetadata, LigandFeatures, TokenType
 
 ARCHITECTURE_VERSION = "kpgt-light-base-v1"
 
+#: Parameters that exist only for KPGT's own pre-training objectives. No
+#: forward path through this encoder reaches them, so they stay frozen in every
+#: regime, ``from_scratch`` included: marking them trainable would allocate
+#: optimizer state that never updates and inflate every reported "trainable
+#: parameters" count with weights that cannot move.
+PRETRAINING_ONLY = (
+    "fp_predictor",
+    "md_predictor",
+    "node_predictor",
+    "mask_emb",
+    "model.mask_emb",
+)
+
+
+def apply_kpgt_freezing(module: torch.nn.Module, config: "KPGTConfig") -> None:
+    """Set ``requires_grad`` on a LiGhT predictor to match ``config``.
+
+    **One function, called from both places.** The encoder (extraction) and the
+    arm (training) each used to own a copy of this policy, and they drifted the
+    moment ``from_scratch`` existed: constructing an encoder around an arm's
+    module -- which is exactly what building provenance metadata does --
+    silently re-applied the partial-fine-tuning rule and re-pinned the
+    embeddings of a from-scratch model. It trained, and reported a loss curve,
+    with 452,896 parameters that were supposed to be learning held at their
+    random initialisation. Duplicated policy is what made that possible, so
+    there is now only one copy.
+
+    Two regimes, and the difference is not a matter of degree.
+    ``n_trainable_layers`` is partial fine-tuning: the trailing blocks move and
+    everything beneath them stays put, which is right only when what stays put
+    was pretrained. ``from_scratch`` trains all of it except
+    :data:`PRETRAINING_ONLY`, because a permanently frozen *random* embedding is
+    not a conservative choice but an uncorrectable one.
+    """
+    for parameter in module.parameters():
+        parameter.requires_grad_(False)
+
+    if config.from_scratch:
+        for name, parameter in module.named_parameters():
+            if not name.startswith(PRETRAINING_ONLY):
+                parameter.requires_grad_(True)
+        return
+
+    count = config.n_trainable_layers
+    if count:
+        for layer in module.model.mol_T_layers[-count:]:  # type: ignore[union-attr]
+            for parameter in layer.parameters():
+                parameter.requires_grad_(True)
+
 
 @dataclass(frozen=True)
 class KPGTConfig:
@@ -111,12 +160,95 @@ class KPGTConfig:
     #: the regimes can never share cached vectors.
     n_trainable_layers: int = 0
 
+    #: Train the whole encoder from random initialisation, embeddings included.
+    #:
+    #: **This is a different regime, not a bigger** ``n_trainable_layers``.
+    #: Partial fine-tuning deliberately keeps the input embeddings and the
+    #: path/distance attention biases frozen, because unfreezing an embedding
+    #: under frozen layers moves the representation out from under them. That
+    #: reasoning assumes the frozen weights are *pretrained*. With no
+    #: checkpoint they are random, and freezing them permanently is not
+    #: conservative — it is a fixed random input embedding the model can never
+    #: correct. Measured: even at the maximum ``n_trainable_layers=12``,
+    #: 6,818,977 parameters stay frozen, of which ``triplet_emb`` alone is
+    #: 3,500,544.
+    #:
+    #: So ``from_scratch`` trains everything except :data:`PRETRAINING_ONLY`,
+    #: which no forward path through this arm ever calls.
+    #:
+    #: **What survives is LiGhT, and that is what it gets called.** The authors
+    #: describe KPGT as two separable things: "a novel graph transformer
+    #: architecture, LiGhT, and a knowledge-guided pre-training strategy". This
+    #: regime has the first and not the second, so
+    #: :meth:`KPGTLigandEncoder.metadata` reports ``ligand_light_mini`` rather
+    #: than any name containing KPGT — a name that kept the acronym and negated
+    #: one letter would ask every reader to hold a correction in mind, and a
+    #: results table would still get filed against published KPGT numbers.
+    #:
+    #: The knowledge inputs are **not** lost, which is why "LiGhT" is accurate
+    #: rather than a hedge: the 512-bit fingerprint and 200 descriptors still
+    #: condition every forward pass and still occupy two nodes per molecule.
+    #: They are inputs to the architecture. Only the objective that
+    #: *reconstructed* them is gone.
+    from_scratch: bool = False
+
     def __post_init__(self) -> None:
         if not 0 <= self.n_trainable_layers <= self.n_mol_layers:
             raise ValueError(
                 f"n_trainable_layers must be in [0, {self.n_mol_layers}], "
                 f"got {self.n_trainable_layers}"
             )
+        if self.from_scratch and self.n_trainable_layers != self.n_mol_layers:
+            raise ValueError(
+                "from_scratch trains every layer, so n_trainable_layers must "
+                f"equal n_mol_layers ({self.n_mol_layers}), got "
+                f"{self.n_trainable_layers}. Setting one without the other "
+                "would silently train less than the name promises"
+            )
+        if self.d_g_feats % self.n_heads:
+            raise ValueError(
+                f"d_g_feats {self.d_g_feats} is not divisible by n_heads "
+                f"{self.n_heads}"
+            )
+        if self.d_g_feats // self.d_hpath_ratio < 1:
+            raise ValueError(
+                f"d_hpath_ratio {self.d_hpath_ratio} exceeds d_g_feats "
+                f"{self.d_g_feats}, leaving the triplet path width at 0"
+            )
+
+    @classmethod
+    def mini(cls, **overrides: object) -> "KPGTConfig":
+        """**LiGhT-mini**: a small line-graph transformer trained from scratch.
+
+        Reported as ``ligand_light_mini``. LiGhT is the authors' own name for
+        KPGT's architecture, as distinct from its pre-training strategy, and the
+        architecture is all this configuration has. It keeps the line graph, the
+        bond-level triplet tokens and the two knowledge nodes; it has no
+        pre-trained weights and supports no claim about KPGT.
+
+        **2,232,352 trainable parameters** against the GAT arm's 2,101,120 — 6%
+        apart, so a comparison between the two arms is about bond-level versus
+        atom-level tokens and the knowledge inputs, not about capacity. Whole
+        models: 9,324,195 trainable against v2-mid's 9,254,787, within 0.8%.
+        That is the only reason these particular numbers were chosen; they are
+        not tuned, and no sweep has been run.
+
+        It is small because the published ``base.pth`` is not obtainable here
+        (see ``docs/STATUS.md``). A 91.9M-parameter transformer learning from
+        random initialisation on this corpus is not a serious proposition; a
+        2.2M one, matched to a baseline that works, is.
+        """
+        defaults = dict(
+            d_g_feats=192,
+            n_mol_layers=4,
+            n_heads=8,
+            d_hpath_ratio=4,
+            path_length=5,
+            n_trainable_layers=4,
+            from_scratch=True,
+        )
+        defaults.update(overrides)
+        return cls(**defaults)  # type: ignore[arg-type]
 
     @property
     def is_frozen(self) -> bool:
@@ -148,8 +280,19 @@ class KPGTConfig:
             "d_hpath_ratio": self.d_hpath_ratio,
             "path_length": self.path_length,
             "n_trainable_layers": self.n_trainable_layers,
+            "from_scratch": self.from_scratch,
             "architecture_version": ARCHITECTURE_VERSION,
         }
+
+    @property
+    def token_dim(self) -> int:
+        """Width of one triplet state.
+
+        Named the same on every arm's config so ``BindraConfig`` can size its
+        adapters without knowing which arm it holds; the GAT arm calls the same
+        quantity ``hidden_dim``.
+        """
+        return self.d_g_feats
 
     @property
     def graph_dim(self) -> int:
@@ -190,14 +333,12 @@ class KPGTLigandEncoder:
 
         Called from ``__init__`` so an encoder is never in a state its config
         does not describe.
+
+        Delegates to :func:`apply_kpgt_freezing`, which is also what the
+        training arm calls. When these were two copies they drifted, and an
+        encoder built around an arm's module re-pinned that arm's embeddings.
         """
-        for parameter in self.module.parameters():
-            parameter.requires_grad_(False)
-        count = self.config.n_trainable_layers
-        if count:
-            for layer in self.module.model.mol_T_layers[-count:]:
-                for parameter in layer.parameters():
-                    parameter.requires_grad_(True)
+        apply_kpgt_freezing(self.module, self.config)
 
     def trainable_parameters(self) -> list[torch.nn.Parameter]:
         """The parameters an optimizer should receive. Empty when fully frozen."""
@@ -277,8 +418,13 @@ class KPGTLigandEncoder:
         return self.config.graph_dim
 
     def metadata(self) -> EncoderMetadata:
+        # A from-scratch model keeps KPGT's architecture and its knowledge
+        # inputs but none of its pre-training, which is the part the name
+        # refers to. Reported under a different name so no results table can
+        # read as a KPGT result; the name reaches every cache key and every
+        # provenance record.
         return EncoderMetadata(
-            name="ligand_kpgt",
+            name="ligand_light_mini" if self.config.from_scratch else "ligand_kpgt",
             checkpoint=self.checkpoint,
             output_dim=self.token_dim,
             precision=str(next(self.module.parameters()).dtype).removeprefix("torch."),

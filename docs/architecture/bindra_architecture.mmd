@@ -1,57 +1,82 @@
 ---
-title: "BINDRA — random_pair-gat-frozen-v2-mid (9,254,787 trainable parameters)"
+title: "BINDRA — two ligand arms behind one contract · trained: random_pair-gat-frozen-v2-mid (9,254,787 params)"
+config:
+  flowchart:
+    wrappingWidth: 420
+    nodeSpacing: 45
+    rankSpacing: 55
 ---
 flowchart TB
 
-%% ============ INPUTS ============
+%% Solid = the trained v2-mid path. Dashed = built and tested, never trained.
+
 subgraph IN["INPUTS"]
   direction LR
   SEQ["Protein sequence<br/>median 454 aa, max 34,350"]
   SMI["Ligand SMILES<br/>standardized, InChIKey-keyed"]
 end
 
-%% ============ FROZEN PROTEIN SIDE ============
-subgraph PROT["PROTEIN ENCODER — FROZEN, NOT TRAINED"]
-  ESMC["ESM-C 600M<br/>biohub/ESMC-600M @ fcc9d36f<br/>573,632,640 params · 0 trainable<br/>2,046-residue windows, mean-merged overlap"]
-  CACHE[("Feature cache<br/>14.023 GiB bf16, 44 shards<br/>10,820 constructs<br/>re-encode bit-identical")]
+subgraph PROT["PROTEIN ENCODER — FROZEN"]
+  ESMC["ESM-C 600M @ fcc9d36f<br/>573,632,640 params · 0 trainable<br/>2,046-residue windows, mean-merged"]
+  CACHE[("Feature cache<br/>14.023 GiB bf16 · 44 shards<br/>10,820 constructs, bit-identical")]
   ESMC -->|"encode once"| CACHE
 end
 
-%% ============ TRAINED LIGAND SIDE ============
-subgraph LIG["LIGAND ENCODER — GATv2, TRAINED · 2,101,120 params (22.7%)"]
-  FEAT["Molecular graph (RDKit)<br/>78-dim atom · 12-dim bond<br/>bit-identical to legacy layout"]
-  LPROJ["Linear 78 to 320 + LayerNorm"]
-  GAT["5 x GATv2Layer, 8 heads<br/>──────────────<br/>edge-conditioned logits:<br/>a · LeakyReLU(Ws·h_src + Wd·h_dst + We·e)<br/>e = 12 bond feats + self-loop flag<br/>segment softmax over incoming edges<br/>residual + LayerNorm"]
-  READ["Readout: masked mean || max<br/>per molecule"]
-  FEAT --> LPROJ --> GAT
-  GAT --> READ
+subgraph LIGSEAM["LIGAND ARM — ONE CONTRACT, TWO IMPLEMENTATIONS"]
+  direction LR
+  BUILD["LigandBatchBuilder<br/>carries the arm NAME, so it and its<br/>featurizer pickle for the process pool<br/>72% of the batch build, GIL-bound in RDKit<br/>only SMILES cross; the ~144 MiB protein<br/>tensor never does"]
+
+  subgraph ARMGAT["GATv2 — TRAINED · 2,101,120 params"]
+    direction TB
+    FEAT["Atom graph · 78-dim atom, 12-dim bond<br/>bit-identical to legacy layout"]
+    GAT["5 x GATv2Layer, 8 heads, dim 320<br/>edge-conditioned logits, self-loop flag<br/>segment softmax over incoming edges"]
+    READ["mean || max → 640"]
+    FEAT --> GAT --> READ
+  end
+
+  subgraph ARMLIGHT["LiGhT-mini — BUILT AND TESTED, NEVER TRAINED · 2,232,352 params"]
+    direction TB
+    KFEAT["Line graph + knowledge inputs<br/>137-dim atom, 14-dim bond<br/>512-bit fingerprint, 200 descriptors<br/>descriptors dominate; computed in the pool"]
+    KLIGHT["LiGhT triplet transformer, pure PyTorch<br/>6.9e-06 vs the DGL reference<br/>dim 192, 4 layers, 8 heads<br/>──────────────<br/>trains EVERY weight from scratch:<br/>embeddings and attention biases included,<br/>which no partial-unfreeze setting reaches"]
+    KREAD["fp || md || mean → 576"]
+    DROP{{"knowledge nodes dropped<br/>from the token axis<br/>a fingerprint with a row in the<br/>attention map cannot be drawn on<br/>a molecule. Kept in the readout.<br/>Virtual-atom triplets are KEPT"}}
+    KFEAT --> KLIGHT --> KREAD
+    KLIGHT --> DROP
+  end
+
+  CONTRACT["FusionTokens — the seam<br/>tokens [B, T, token_dim] + mask · graph_states [B, graph_dim]<br/>──────────────<br/>each arm pads its OWN tokens: only the arm<br/>knows which are real<br/>GAT 1 token = 1 atom · 320 / 640<br/>LiGhT 1 token = 1 BOND · 192 / 576"]
+
+  BUILD --> ARMGAT
+  BUILD -.-> ARMLIGHT
+  READ --> CONTRACT
+  GAT --> CONTRACT
+  KREAD -.-> CONTRACT
+  DROP -.-> CONTRACT
 end
 
-%% ============ ADAPTERS ============
-subgraph ADPT["SHARED ADAPTERS — one instance, used by every task · 682,944 params (7.4%)"]
-  AP["protein<br/>LN(1152) to Linear to 320 to LN"]
-  AL["ligand tokens<br/>LN(320) to Linear to 320 to LN"]
-  AG["ligand graph<br/>LN(640) to Linear to 320 to LN"]
+subgraph ADPT["SHARED ADAPTERS — one instance, every task"]
+  direction LR
+  AP["protein<br/>LN#40;1152#41; → 320"]
+  AL["ligand tokens<br/>LN#40;token_dim#41; → 320"]
+  AG["ligand graph<br/>LN#40;graph_dim#41; → 320"]
+  WIDTH["Widths READ OFF the arm's config —<br/>nothing downstream names an arm<br/>GAT 682,944 · LiGhT-mini 621,120"]
 end
 
-%% ============ FUSION ============
-subgraph FUSE["BIDIRECTIONAL CROSS-ATTENTION — 2 layers x 8 heads, head_dim 40 · 4,931,840 params (53.3%)"]
+subgraph FUSE["BIDIRECTIONAL CROSS-ATTENTION — 2 layers x 8 heads · 4,931,840 params"]
   direction TB
-  P2L["protein to ligand<br/>Q from residues, K/V from atoms<br/>masked by LIGAND mask<br/>rows sum to 1 over atoms"]
-  L2P["ligand to protein<br/>Q from atoms, K/V from residues<br/>masked by PROTEIN mask<br/>rows sum to 1 over residues"]
-  NOTE["Separate parameters, run in PARALLEL<br/>neither sees the other's output<br/>NOT transposes of each other"]
-  FFP["protein FFN 320-1280-320<br/>+ residual + LayerNorm + re-mask"]
-  FFL["ligand FFN 320-1280-320<br/>+ residual + LayerNorm + re-mask"]
+  P2L["protein → ligand<br/>Q residues, K/V tokens<br/>masked by LIGAND mask"]
+  L2P["ligand → protein<br/>Q tokens, K/V residues<br/>masked by PROTEIN mask"]
+  NOTE["Separate parameters, run in PARALLEL<br/>NOT transposes of each other"]
+  FFP["protein FFN 320-1280-320<br/>+ residual + LN + re-mask"]
+  FFL["ligand FFN 320-1280-320<br/>+ residual + LN + re-mask"]
   P2L --- NOTE --- L2P
   P2L --> FFP
   L2P --> FFL
 end
 
-%% ============ POOLING ============
-POOL["MASKED POOLING to pair vector [B, 1280]<br/>──────────────<br/>1. masked mean of fused residues #40;320#41;<br/>2. masked mean of fused atoms #40;320#41;<br/>3. adapted ligand graph readout #40;320#41;<br/>4. masked mean of PRE-fusion protein #40;320#41;<br/>#40;4#41; is a path that does not depend on attention finding anything"]
+POOL["MASKED POOLING → [B, 1280]<br/>fused residues ++ fused tokens ++ ligand graph<br/>++ PRE-fusion protein mean<br/>the last is a path that does not depend on<br/>attention having found anything"]
 
-%% ============ HEADS ============
-subgraph HEAD["ENDPOINT HEADS — three INDEPENDENT trunks · 1,538,883 params (16.6%)"]
+subgraph HEAD["ENDPOINT HEADS — three INDEPENDENT trunks · 1,538,883 params"]
   direction LR
   HKD["pKd<br/>1280-320-320-1"]
   HKI["pKi<br/>1280-320-320-1"]
@@ -60,43 +85,41 @@ end
 
 GATHER{{"gather ONLY the measured endpoint<br/>no fabricated zero label exists"}}
 
-%% ============ LOSS ============
 subgraph LOSS["LOSS = exact + 1.0 x censored + 0.25 x auxiliary"]
-  direction TB
-  LEX["EXACT labels<br/>Huber, delta = measured sigma_rep<br/>Kd 0.945 · Ki 0.641 · IC50 0.671<br/>errors inside the noise floor are free"]
-  LCEN["CENSORED labels (16.6%)<br/>one-sided hinge then same Huber<br/>upper b: max(0, pred - b)<br/>lower b: max(0, b - pred)<br/>ZERO cost inside the bound"]
-  LAUX["Tier B / non-primary<br/>weight 0.25, structurally separate<br/>cannot reach the primary term"]
+  direction LR
+  LEX["EXACT · Huber, delta = measured sigma_rep<br/>Kd 0.945 · Ki 0.641 · IC50 0.671<br/>error inside the noise floor is free"]
+  LCEN["CENSORED #40;16.6%#41; · one-sided hinge<br/>then the same Huber<br/>ZERO cost inside the bound"]
+  LAUX["Tier B · weight 0.25<br/>structurally cannot reach<br/>the primary term"]
 end
 
-%% ============ IBAM ============
-IBAM["iBAM export<br/>p2l [B,8,L,T] · l2p [B,8,T,L] per layer<br/>kept unaveraged over heads<br/>residue x token #40;native#41;<br/>residue x atom #40;DERIVED aggregation#41;<br/>──────────────<br/>residue ranking uses l2p summed over tokens:<br/>p2l rows are softmax over atoms, so every<br/>residue total is exactly 1 and cannot rank"]
+IBAM["iBAM export · p2l [B,8,L,T] · l2p [B,8,T,L] per layer<br/>unaveraged over heads · residue x token native,<br/>residue x atom DERIVED<br/>──────────────<br/>ranking uses l2p: p2l rows are softmax over tokens,<br/>so every residue total is 1 and cannot rank<br/>a LiGhT column is a BOND, not a triplet index"]
 
-%% ============ WIRING ============
 SEQ --> ESMC
-SMI --> FEAT
+SMI --> BUILD
 CACHE -->|"[B, L, 1152] bf16"| AP
-GAT -->|"[B, T, 320] padded + mask"| AL
-READ -->|"[B, 640]"| AG
+CONTRACT -->|"tokens + mask"| AL
+CONTRACT -->|"graph_states"| AG
 
-AP -->|"[B, L, 320]"| P2L
-AP -->|"[B, L, 320]"| L2P
-AL -->|"[B, T, 320]"| P2L
-AL -->|"[B, T, 320]"| L2P
+AP --> P2L
+AP --> L2P
+AL --> P2L
+AL --> L2P
 
-FFP -->|"[B, L, 320]"| POOL
-FFL -->|"[B, T, 320]"| POOL
-AG -->|"[B, 320]"| POOL
+FFP --> POOL
+FFL --> POOL
+AG --> POOL
 AP -.->|"pre-fusion bypass"| POOL
 
 POOL --> HKD & HKI & HIC
 HKD & HKI & HIC --> GATHER
 GATHER --> LEX & LCEN & LAUX
-P2L -.->|"p2l maps"| IBAM
-L2P -.->|"l2p maps"| IBAM
+P2L -.-> IBAM
+L2P -.-> IBAM
 
-%% ============ STYLE ============
 classDef frozen fill:#e8eaf0,stroke:#6b7280,stroke-width:2px,color:#111827
 classDef trained fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#0c2a6b
+classDef untrained fill:#f1f5f9,stroke:#64748b,stroke-width:2px,stroke-dasharray:6 4,color:#334155
+classDef seam fill:#dcfce7,stroke:#16a34a,stroke-width:2px,color:#14532d
 classDef fusion fill:#ede9fe,stroke:#7c3aed,stroke-width:2px,color:#3b1f78
 classDef lossbox fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#713f12
 classDef gate fill:#fee2e2,stroke:#dc2626,stroke-width:2px,color:#7f1d1d
@@ -104,10 +127,12 @@ classDef note fill:#f8fafc,stroke:#94a3b8,stroke-width:1px,color:#334155,font-st
 classDef io fill:#ffffff,stroke:#334155,stroke-width:2px,color:#0f172a
 
 class ESMC,CACHE frozen
-class FEAT,LPROJ,GAT,READ,AP,AL,AG trained
+class FEAT,GAT,READ,AP,AL,AG trained
+class KFEAT,KLIGHT,KREAD untrained
+class BUILD,CONTRACT seam
+class DROP,GATHER gate
 class P2L,L2P,FFP,FFL,POOL fusion
 class HKD,HKI,HIC trained
 class LEX,LCEN,LAUX lossbox
-class GATHER gate
-class NOTE,IBAM note
+class NOTE,IBAM,WIDTH note
 class SEQ,SMI io

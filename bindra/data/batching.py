@@ -42,13 +42,7 @@ from typing import Iterator, Sequence
 import numpy as np
 import torch
 
-from bindra.encoders.ligand_graph import (
-    BatchedGraphs,
-    LigandGraphError,
-    MolecularGraph,
-    collate_graphs,
-    featurize_molecule,
-)
+from bindra.encoders.ligand_featurizers import LigandBatchBuilder
 from bindra.features.cache import ProteinFeatureCache
 from bindra.features.types import EncoderMetadata
 from bindra.training.losses.affinity import AffinityTargets
@@ -197,7 +191,11 @@ class PairBatch:
 
     protein_features: torch.Tensor  # [B, L, dp] bf16 on the host, float32 on device
     protein_mask: torch.Tensor  # [B, L] bool, True = real residue
-    ligands: BatchedGraphs
+    #: Whatever the configured arm collates: ``BatchedGraphs`` for GAT, a
+    #: ``KPGTLigandBatch`` for KPGT. Typed loosely because the batch type *is*
+    #: what differs between arms; a consumer must go through the arm rather
+    #: than assume atoms. Both expose ``num_graphs`` and ``to``.
+    ligands: object
     targets: AffinityTargets
     observation_ids: tuple[str, ...]
     smiles: tuple[str, ...]
@@ -223,7 +221,7 @@ class PairBatch:
         return PairBatch(
             protein_features=self.protein_features.to(device, dtype=dtype),
             protein_mask=self.protein_mask.to(device),
-            ligands=self.ligands.to(device),
+            ligands=self.ligands.to(device),  # type: ignore[attr-defined]
             targets=self.targets.to(device),
             observation_ids=self.observation_ids,
             smiles=self.smiles,
@@ -247,12 +245,17 @@ class PairDataset:
         protein_cache: ProteinFeatureCache,
         limit: int | None = None,
         length_multiple: int = 128,
+        ligand_builder: LigandBatchBuilder | None = None,
     ) -> None:
         import pandas as pd
 
         #: Must match the policy the loader uses, or the budget check and the
         #: actual padding disagree.
         self.length_multiple = length_multiple
+        #: Which arm's featurizer the pool maps. Defaults to GAT, which is what
+        #: the trained runs used; passing the model's own ligand config through
+        #: ``LigandBatchBuilder.for_config`` is how a KPGT run stays consistent.
+        self.ligand_builder = ligand_builder or LigandBatchBuilder()
 
         from bindra.data.splits import read_split
         from bindra.data.tables import ShardedTableRef
@@ -447,25 +450,30 @@ class PairDataset:
         which is 72% of this function and is GIL-bound Python inside RDKit's
         wrappers -- threads measured at 1.1x over serial, so the machine's eight
         cores went unused. Only the SMILES go out and small graph arrays come
-        back (~1 MiB a batch); the protein tensor, which is ~144 MiB, never
-        crosses a process boundary.
+        back (~1 MiB a batch for GAT, ~3 KiB a molecule for KPGT, whose
+        descriptors are computed out there too); the protein tensor, which is
+        ~144 MiB, never crosses a process boundary.
+
+        Which featurizer the pool maps comes from ``self.ligand_builder``, so
+        the arm is a configuration rather than a branch here.
         """
         if not indices:
             raise BatchingError("cannot build an empty batch")
         rows = self.frame.iloc[list(indices)]
         smiles = list(rows["standardized_smiles"])
+        builder = self.ligand_builder
+        featurize = builder.featurize
 
         try:
             if executor is not None and len(smiles) > 8:
                 chunk = max(1, len(smiles) // (4 * (executor._max_workers or 1)))
-                graphs: list[MolecularGraph] = list(
-                    executor.map(featurize_molecule, smiles, chunksize=chunk)
-                )
+                parts = list(executor.map(featurize, smiles, chunksize=chunk))
             else:
-                graphs = [featurize_molecule(s) for s in smiles]
-        except LigandGraphError as exc:
+                parts = [featurize(s) for s in smiles]
+        except builder.featurization_errors as exc:
             raise BatchingError(
-                f"a curated molecule will not featurize: {exc}"
+                f"a curated molecule will not featurize for the "
+                f"{builder.arm!r} arm: {exc}"
             ) from exc
 
         features = [
@@ -491,7 +499,7 @@ class PairDataset:
         return PairBatch(
             protein_features=padded,
             protein_mask=mask,
-            ligands=collate_graphs(graphs),
+            ligands=builder.collate(parts),
             targets=AffinityTargets.from_frame(rows),
             observation_ids=tuple(rows["observation_id"]),
             smiles=tuple(rows["standardized_smiles"]),
