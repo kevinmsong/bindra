@@ -40,6 +40,22 @@ from typing import Any, Callable, Sequence
 #: Built lazily, once per worker process. See the module docstring.
 _DESCRIPTORS: Any = None
 
+#: Per-process handle on the knowledge cache, opened on first use. A memmap is
+#: cheap to open per worker and the pool is long-lived, so this costs one open
+#: per process rather than one per batch.
+_KNOWLEDGE: Any = None
+_KNOWLEDGE_DIR: Any = None
+
+
+def _knowledge_cache(directory: str):
+    global _KNOWLEDGE, _KNOWLEDGE_DIR
+    if _KNOWLEDGE is None or _KNOWLEDGE_DIR != directory:
+        from bindra.features.knowledge_cache import open_cache
+
+        _KNOWLEDGE = open_cache(directory)
+        _KNOWLEDGE_DIR = directory
+    return _KNOWLEDGE
+
 
 def _descriptor_generator() -> Any:
     global _DESCRIPTORS
@@ -66,7 +82,7 @@ class KPGTMoleculeParts:
     descriptors: Any  # np.ndarray [200] float32
 
 
-def featurize_kpgt_one(smiles: str) -> KPGTMoleculeParts:
+def featurize_kpgt_one(smiles: str, cache_dir: str | None = None) -> KPGTMoleculeParts:
     """One molecule's triplet graph plus both knowledge vectors.
 
     NaNs from the descriptor generator are zeroed here rather than downstream:
@@ -83,6 +99,25 @@ def featurize_kpgt_one(smiles: str) -> KPGTMoleculeParts:
         rdk_fingerprint,
     )
     from bindra.encoders.ligand_arm import LigandArmError
+
+    # The cached half, when a cache is configured and holds this molecule.
+    # Descriptors are 81% of this function; the graph below is the rest.
+    if cache_dir:
+        from bindra.features.knowledge_cache import (
+            knowledge_cache_key,
+            policy_digest,
+            unpack,
+        )
+
+        key = knowledge_cache_key(smiles, policy_digest(DEFAULT_POLICY))
+        cache = _knowledge_cache(cache_dir)
+        if key in cache:
+            fingerprint, descriptors = unpack(cache.get(key))
+            return KPGTMoleculeParts(
+                graph=featurize_kpgt(smiles, DEFAULT_POLICY),
+                fingerprint=fingerprint.numpy(),
+                descriptors=descriptors.numpy(),
+            )
 
     values = np.asarray(_descriptor_generator().process(smiles)[1:], dtype=np.float32)
     if values.shape[0] != N_DESCRIPTORS:
@@ -126,6 +161,9 @@ class LigandBatchBuilder:
     """
 
     arm: str = "kpgt"
+    #: Directory of the precomputed fingerprint/descriptor cache, or None to
+    #: compute them live. A plain string, so the builder stays picklable.
+    knowledge_cache: str | None = None
 
     def __post_init__(self) -> None:
         if self.arm != "kpgt":
@@ -150,7 +188,16 @@ class LigandBatchBuilder:
 
     @property
     def featurize(self) -> Callable[[str], Any]:
-        """The per-molecule function, as a picklable module-level reference."""
+        """The per-molecule function, picklable for the pool.
+
+        ``functools.partial`` over a module-level function with a string
+        argument pickles by qualified name, so the cache path survives the trip
+        into a worker where a closure would not.
+        """
+        if self.knowledge_cache:
+            import functools
+
+            return functools.partial(featurize_kpgt_one, cache_dir=self.knowledge_cache)
         return featurize_kpgt_one
 
     def collate(self, parts: Sequence[Any]) -> Any:

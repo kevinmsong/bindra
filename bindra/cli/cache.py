@@ -302,6 +302,95 @@ def cmd_verify(args) -> int:
     return 1
 
 
+def _knowledge_worker(smiles: str):
+    """One molecule's fingerprint and descriptors. Module-level so a pool can map it."""
+    from bindra.encoders.ligand_featurizers import _descriptor_generator
+    from bindra.encoders.kpgt_descriptors import N_DESCRIPTORS
+    from bindra.encoders.kpgt_graph import DEFAULT_POLICY, rdk_fingerprint
+    import numpy as np
+
+    values = np.asarray(_descriptor_generator().process(smiles)[1:], dtype=np.float32)
+    if values.shape[0] != N_DESCRIPTORS:
+        return smiles, None
+    return smiles, (rdk_fingerprint(smiles, DEFAULT_POLICY), np.nan_to_num(values))
+
+
+def cmd_knowledge(args) -> int:
+    """Precompute KPGT's fingerprint and descriptors for every curated molecule.
+
+    This is the measured bottleneck: descriptors are 81% of ligand featurization
+    and featurization is what the training loop waits on. They are a
+    deterministic function of the standardized SMILES, so they are cacheable;
+    the triplet graph is left live.
+    """
+    import time
+    from concurrent.futures import ProcessPoolExecutor
+
+    import pandas as pd
+
+    from bindra.encoders.kpgt_graph import DEFAULT_POLICY
+    from bindra.features.knowledge_cache import (
+        knowledge_cache_key,
+        open_cache,
+        pack,
+        policy_digest,
+    )
+
+    processed = Path(args.processed)
+    out = Path(args.out or "data/cache/knowledge")
+    policy_hash = policy_digest(DEFAULT_POLICY)
+
+    frames = []
+    for path in sorted((processed / "ligands").glob("*.parquet")):
+        frame = pd.read_parquet(path, columns=["standardized_smiles", "status"])
+        frames.append(frame[frame["status"] == "OK"])
+    smiles = sorted({s for s in pd.concat(frames)["standardized_smiles"] if isinstance(s, str)})
+    if args.limit:
+        smiles = smiles[: args.limit]
+    print(f"[{OK}] {len(smiles):,} distinct standardized molecules", flush=True)
+
+    cache = open_cache(out, mode="a" if out.exists() else "w", policy_hash=policy_hash)
+    have = cache.keys()
+    todo = [s for s in smiles if knowledge_cache_key(s, policy_hash) not in have]
+    print(
+        f"[{OK}] {len(have):,} already cached, {len(todo):,} to compute "
+        f"(policy {policy_hash})",
+        flush=True,
+    )
+    if not todo:
+        print(f"[{OK}] nothing to do")
+        return 0
+
+    started = time.perf_counter()
+    done = failed = 0
+    with ProcessPoolExecutor(max_workers=args.workers) as pool:
+        chunk = max(1, len(todo) // (8 * args.workers))
+        for smi, parts in pool.map(_knowledge_worker, todo, chunksize=chunk):
+            if parts is None:
+                failed += 1
+                continue
+            cache.put(knowledge_cache_key(smi, policy_hash), pack(*parts), molecule_id=smi)
+            done += 1
+            if done % 20000 == 0:
+                rate = done / max(1e-9, time.perf_counter() - started)
+                left = (len(todo) - done) / max(1e-9, rate)
+                print(
+                    f"    {done:,}/{len(todo):,} ({100*done/len(todo):.1f}%) "
+                    f"{rate:.0f} mol/s, {left/3600:.1f}h left",
+                    flush=True,
+                )
+    if hasattr(cache, "flush"):
+        cache.flush()
+    elapsed = time.perf_counter() - started
+    print(
+        f"[{OK}] cached {done:,} molecules in {elapsed/3600:.2f}h "
+        f"({done/max(1e-9, elapsed):.0f} mol/s), {failed:,} failed",
+        flush=True,
+    )
+    print(f"[{OK}] {cache.total_bytes / 2**30:.2f} GiB at {out}", flush=True)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="bindra cache",
@@ -321,6 +410,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     proteins.add_argument("--allow-cpu", action="store_true", help="Permit CPU (very slow).")
     proteins.set_defaults(func=cmd_proteins)
+
+    knowledge = subparsers.add_parser(
+        "knowledge",
+        help="Precompute KPGT fingerprints and descriptors (the 81% bottleneck).",
+    )
+    knowledge.add_argument("--processed", default="data/processed/202610")
+    knowledge.add_argument("--out", default="data/cache/knowledge")
+    knowledge.add_argument("--workers", type=int, default=14)
+    knowledge.add_argument("--limit", type=int, default=0, help="Cap molecules, for a trial.")
+    knowledge.set_defaults(func=cmd_knowledge)
 
     verify = subparsers.add_parser("verify", help="Compare cached features against live encoding.")
     verify.add_argument("--processed", default="data/processed/202610")

@@ -49,6 +49,18 @@ DEFAULT_SHARD_ROWS = 250_000
 INDEX_VERSION = 2
 
 
+#: Raw integer type each storage dtype is written as. The cache stores raw bits
+#: and views them back, never converting, so a value read is bit-identical to
+#: the value written.
+#:
+#: bf16 is right for encoder activations, where ~3 decimal digits is far below
+#: the noise in the thing being stored. It is wrong for KPGT's knowledge inputs:
+#: the 200 descriptors are CDF-normalised values the published weights were
+#: fitted against, and rounding them to bf16 would move the input distribution
+#: out from under any future pretrained checkpoint.
+RAW_DTYPE = {torch.bfloat16: np.uint16, torch.float32: np.uint32}
+
+
 @dataclass(frozen=True)
 class VectorEntry:
     """Where one molecule's vector lives."""
@@ -80,8 +92,16 @@ class LigandVectorCache:
         dim: int | None = None,
         shard_rows: int = DEFAULT_SHARD_ROWS,
         mode: str = "r",
+        dtype: torch.dtype = torch.bfloat16,
     ) -> None:
+        if dtype not in RAW_DTYPE:
+            raise FeatureCacheError(
+                f"unsupported storage dtype {dtype}; expected one of "
+                f"{sorted(str(d) for d in RAW_DTYPE)}"
+            )
         self.directory = Path(directory)
+        self.dtype = dtype
+        self.raw_dtype = RAW_DTYPE[dtype]
         self.shard_rows = shard_rows
         self.mode = mode
         self.dim = dim
@@ -104,6 +124,11 @@ class LigandVectorCache:
             self.directory.mkdir(parents=True, exist_ok=True)
 
     # -- paths -------------------------------------------------------------
+
+    @property
+    def raw_dtype_torch(self) -> torch.dtype:
+        """The torch integer type matching :attr:`raw_dtype`, for bit views."""
+        return torch.uint16 if self.dtype is torch.bfloat16 else torch.int32
 
     @property
     def index_path(self) -> Path:
@@ -149,7 +174,7 @@ class LigandVectorCache:
             "index_version": INDEX_VERSION,
             "encoder_metadata": self._metadata_payload,
             "dim": self.dim,
-            "dtype": "bfloat16",
+            "dtype": str(self.dtype).removeprefix("torch."),
             "shard_rows": self.shard_rows,
             "n_shards": self._next_shard,
             "n_entries": len(self._entries),
@@ -186,9 +211,13 @@ class LigandVectorCache:
             path = self.shard_path(index)
             if not path.exists():
                 raise FeatureCacheError(f"shard {index} missing at {path}")
-            rows = path.stat().st_size // (2 * (self.dim or 1))
+            # From the storage dtype, not a hardcoded 2: a wrong itemsize
+            # asks to map past the end of the file, which Windows reports
+            # as "not enough memory resources" rather than as a bad size.
+            itemsize = np.dtype(self.raw_dtype).itemsize
+            rows = path.stat().st_size // (itemsize * (self.dim or 1))
             self._open_shards[index] = np.memmap(
-                path, dtype=np.uint16, mode="r", shape=(rows, self.dim)
+                path, dtype=self.raw_dtype, mode="r", shape=(rows, self.dim)
             )
         return self._open_shards[index]
 
@@ -201,7 +230,7 @@ class LigandVectorCache:
                 f"{cache_key} is not cached; encode it before reading"
             ) from None
         raw = np.asarray(self._shard(entry.shard)[entry.row])
-        return torch.from_numpy(raw.copy()).view(torch.bfloat16)
+        return torch.from_numpy(raw.copy()).view(self.dtype)
 
     def get_many(self, cache_keys: Sequence[str]) -> torch.Tensor:
         """``[len(cache_keys), dim]`` bf16, in the order given.
@@ -210,8 +239,8 @@ class LigandVectorCache:
         once, which is the common case after a sequential encode.
         """
         if not cache_keys:
-            return torch.empty(0, self.dim or 0, dtype=torch.bfloat16)
-        out = np.empty((len(cache_keys), self.dim), dtype=np.uint16)
+            return torch.empty(0, self.dim or 0, dtype=self.dtype)
+        out = np.empty((len(cache_keys), self.dim), dtype=self.raw_dtype)
         by_shard: dict[int, list[tuple[int, int]]] = {}
         for position, key in enumerate(cache_keys):
             try:
@@ -224,7 +253,7 @@ class LigandVectorCache:
             positions = [p for p, _ in items]
             rows = [r for _, r in items]
             out[positions] = memmap[rows]
-        return torch.from_numpy(out).view(torch.bfloat16)
+        return torch.from_numpy(out).view(self.dtype)
 
     # -- writing -----------------------------------------------------------
 
@@ -237,9 +266,9 @@ class LigandVectorCache:
             raise FeatureCacheError(
                 f"expected a 1-D molecule vector, got {tuple(vector.shape)}"
             )
-        if vector.dtype is not torch.bfloat16:
+        if vector.dtype is not self.dtype:
             raise FeatureCacheError(
-                f"expected bfloat16, got {vector.dtype}. The cache stores raw bf16 "
+                f"expected {self.dtype}, got {vector.dtype}. The cache stores raw "
                 "bits; converting here would misreport precision."
             )
         width = int(vector.shape[0])
@@ -249,7 +278,7 @@ class LigandVectorCache:
             raise FeatureCacheError(
                 f"vector width {width} disagrees with the cache's {self.dim}"
             )
-        block = vector.contiguous().view(torch.uint16).cpu().numpy()
+        block = vector.contiguous().view(self.raw_dtype_torch).cpu().numpy()
         self._pending.append((cache_key, molecule_id, block))
         if len(self._pending) >= self.shard_rows:
             self.flush()
