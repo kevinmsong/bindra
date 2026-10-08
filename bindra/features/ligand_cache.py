@@ -197,7 +197,10 @@ class LigandVectorCache:
 
     @property
     def total_bytes(self) -> int:
-        return len(self._entries) * (self.dim or 0) * 2
+        # Itemsize from the storage dtype. Hardcoding 2 under-reported a
+        # float32 cache by exactly half.
+        itemsize = np.dtype(self.raw_dtype).itemsize
+        return len(self._entries) * (self.dim or 0) * itemsize
 
     def metadata(self) -> EncoderMetadata:
         if self._metadata_payload is None:
