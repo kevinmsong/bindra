@@ -48,11 +48,19 @@ _KNOWLEDGE_DIR: Any = None
 
 
 def _knowledge_cache(directory: str):
+    """The compact, memmapped reader -- never the JSON-indexed one.
+
+    `LigandVectorCache` parses a 209 MB index into 1.31 GiB of Python heap per
+    process. One reader can afford that; fourteen featurize workers cannot, and
+    did not: the pool died with OpenBLAS allocation failures partway through a
+    validation pass. `CompactKnowledgeCache` memmaps two flat arrays instead,
+    costing 0.07 GiB per worker and sharing one copy through the page cache.
+    """
     global _KNOWLEDGE, _KNOWLEDGE_DIR
     if _KNOWLEDGE is None or _KNOWLEDGE_DIR != directory:
-        from bindra.features.knowledge_cache import open_cache
+        from bindra.features.knowledge_cache import CompactKnowledgeCache
 
-        _KNOWLEDGE = open_cache(directory)
+        _KNOWLEDGE = CompactKnowledgeCache(directory)
         _KNOWLEDGE_DIR = directory
     return _KNOWLEDGE
 
@@ -103,20 +111,16 @@ def featurize_kpgt_one(smiles: str, cache_dir: str | None = None) -> KPGTMolecul
     # The cached half, when a cache is configured and holds this molecule.
     # Descriptors are 81% of this function; the graph below is the rest.
     if cache_dir:
-        from bindra.features.knowledge_cache import (
-            knowledge_cache_key,
-            policy_digest,
-            unpack,
-        )
+        from bindra.features.knowledge_cache import knowledge_cache_key, policy_digest
 
         key = knowledge_cache_key(smiles, policy_digest(DEFAULT_POLICY))
-        cache = _knowledge_cache(cache_dir)
-        if key in cache:
-            fingerprint, descriptors = unpack(cache.get(key))
+        cached = _knowledge_cache(cache_dir).get(key)
+        if cached is not None:
+            fingerprint, descriptors = cached
             return KPGTMoleculeParts(
                 graph=featurize_kpgt(smiles, DEFAULT_POLICY),
-                fingerprint=fingerprint.numpy(),
-                descriptors=descriptors.numpy(),
+                fingerprint=fingerprint,
+                descriptors=descriptors,
             )
 
     values = np.asarray(_descriptor_generator().process(smiles)[1:], dtype=np.float32)

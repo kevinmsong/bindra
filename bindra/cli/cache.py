@@ -388,6 +388,17 @@ def cmd_knowledge(args) -> int:
         flush=True,
     )
     print(f"[{OK}] {cache.total_bytes / 2**30:.2f} GiB at {out}", flush=True)
+
+    # Without these the featurize workers would each parse the JSON index into
+    # ~1.3 GiB of heap, which is what broke the pool the first time.
+    from bindra.features.knowledge_cache import build_compact_index
+
+    n = build_compact_index(out)
+    print(
+        f"[{OK}] compact memmapped index for {n:,} entries "
+        "(0.07 GiB per worker, against 1.31 for the JSON one)",
+        flush=True,
+    )
     return 0
 
 

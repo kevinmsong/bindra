@@ -112,6 +112,8 @@ def open_cache(directory: Path | str, *, mode: str = "r", policy_hash: str = "")
 
 
 __all__ = [
+    "CompactKnowledgeCache",
+    "build_compact_index",
     "FP_WIDTH",
     "KNOWLEDGE_WIDTH",
     "SCHEMA_VERSION",
@@ -122,3 +124,102 @@ __all__ = [
     "policy_digest",
     "unpack",
 ]
+
+
+# --- compact index ---------------------------------------------------------
+#
+# The JSON index that `LigandVectorCache` writes is 209 MB for this cache, and
+# parsing it costs **1.31 GiB of Python heap and 7.9 s in every process that
+# opens it**. That is tolerable for one reader and fatal for a featurize pool:
+# at fourteen workers it is 18.3 GiB of duplicated dictionary on top of the
+# trainer, which is what exhausted memory and killed the pool mid-validation.
+#
+# These sidecars hold the same mapping as two flat arrays, memmapped rather
+# than parsed: the operating system keeps one copy in the page cache no matter
+# how many workers open it, and opening costs nothing. 1,433,489 entries is
+# 34 MB rather than 209, and lookup is a binary search instead of a dict hit.
+#
+# The key is kept at its full 128 bits. Truncating to 64 would make the arrays
+# smaller and a silent collision -- returning another molecule's descriptors --
+# about 5e-8 likely across this corpus, which is small but not a risk worth
+# taking for 11 MB.
+
+KEYS_FILE = "compact-keys.npy"
+LOCS_FILE = "compact-locs.npy"
+
+
+def _key_to_pair(key: str) -> tuple[int, int]:
+    """A 32-hex-character key as two uint64 halves, for sortable comparison."""
+    return int(key[:16], 16), int(key[16:32], 16)
+
+
+def build_compact_index(directory: Path | str) -> int:
+    """Write the memmappable sidecars from the cache's JSON index. Returns N."""
+    import json
+
+    directory = Path(directory)
+    payload = json.loads((directory / "index.json").read_text(encoding="utf-8"))
+    entries = payload["entries"]
+    items = sorted(
+        (_key_to_pair(k), int(v["shard"]), int(v["row"])) for k, v in entries.items()
+    )
+    keys = np.empty((len(items), 2), dtype=np.uint64)
+    locs = np.empty((len(items), 2), dtype=np.uint32)
+    for i, (pair, shard, row) in enumerate(items):
+        keys[i] = pair
+        locs[i] = (shard, row)
+    np.save(directory / KEYS_FILE, keys)
+    np.save(directory / LOCS_FILE, locs)
+    return len(items)
+
+
+class CompactKnowledgeCache:
+    """Read-only knowledge cache with a memmapped index and no torch in the path.
+
+    Built for the featurize workers: opening is free, the index is shared
+    through the page cache, and a lookup returns numpy arrays directly rather
+    than round-tripping through torch.
+    """
+
+    def __init__(self, directory: Path | str) -> None:
+        self.directory = Path(directory)
+        keys_path = self.directory / KEYS_FILE
+        if not keys_path.exists():
+            raise FileNotFoundError(
+                f"no compact index at {keys_path}; build it with "
+                "`bindra cache knowledge --compact-index`"
+            )
+        self.keys = np.load(keys_path, mmap_mode="r")
+        self.locs = np.load(self.directory / LOCS_FILE, mmap_mode="r")
+        self._shards: dict[int, np.memmap] = {}
+
+    def __len__(self) -> int:
+        return int(self.keys.shape[0])
+
+    def _find(self, key: str) -> tuple[int, int] | None:
+        hi, lo = _key_to_pair(key)
+        # Binary search on the high half, then scan the (tiny) tie block.
+        left = int(np.searchsorted(self.keys[:, 0], hi, side="left"))
+        right = int(np.searchsorted(self.keys[:, 0], hi, side="right"))
+        for i in range(left, right):
+            if int(self.keys[i, 1]) == lo:
+                return int(self.locs[i, 0]), int(self.locs[i, 1])
+        return None
+
+    def _shard(self, index: int) -> np.memmap:
+        if index not in self._shards:
+            path = self.directory / f"vectors-{index:05d}.bin"
+            rows = path.stat().st_size // (4 * KNOWLEDGE_WIDTH)
+            self._shards[index] = np.memmap(
+                path, dtype=np.float32, mode="r", shape=(rows, KNOWLEDGE_WIDTH)
+            )
+        return self._shards[index]
+
+    def get(self, key: str) -> tuple[np.ndarray, np.ndarray] | None:
+        """``(fingerprint, descriptors)`` as numpy, or None if absent."""
+        found = self._find(key)
+        if found is None:
+            return None
+        shard, row = found
+        values = np.asarray(self._shard(shard)[row])
+        return values[:FP_WIDTH].copy(), values[FP_WIDTH:].copy()
