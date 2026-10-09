@@ -80,6 +80,13 @@ PRETRAINING_ONLY = (
     "model.mask_emb",
 )
 
+#: Marker written into every checkpoint bindra pretrain produces, and the
+#: only thing that distinguishes one from the published base.pth. It lives
+#: beside the freezing policy because the two describe the same file: the kind
+#: says which objective wrote it, and the policy says which of its parameters
+#: that objective could reach.
+PRETRAIN_CHECKPOINT_KIND = "bindra-light-pretrain-v1"
+
 
 def apply_kpgt_freezing(module: torch.nn.Module, config: "KPGTConfig") -> None:
     """Set ``requires_grad`` on a LiGhT predictor to match ``config``.

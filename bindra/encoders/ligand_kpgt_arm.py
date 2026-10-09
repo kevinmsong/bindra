@@ -69,6 +69,7 @@ from bindra.encoders.ligand_arm import (
     physical_token_destination,
 )
 from bindra.encoders.ligand_kpgt import (
+    PRETRAIN_CHECKPOINT_KIND,
     PRETRAINING_ONLY,
     KPGTConfig,
     apply_kpgt_freezing,
@@ -294,6 +295,95 @@ class KPGTLigandArmModule(nn.Module):
         self.apply_freezing()
         digest = hashlib.sha256(path.read_bytes()).hexdigest()[:16]
         self.pretrained_checkpoint = f"{path.name}@{digest}"
+        return self.pretrained_checkpoint
+
+    def load_ligand_checkpoint(
+        self,
+        path: Path | str,
+        *,
+        regime: str | None = None,
+        split_id: str | None = None,
+    ) -> str:
+        """Load pretrained LiGhT weights -- ours from ``bindra pretrain``, or ``base.pth``.
+
+        One entry point for both, dispatching on a marker inside the file rather
+        than on its name, because the two carry different obligations and a
+        filename is not evidence of either.
+
+        **The split guards are the point of this method.** Pre-training is
+        self-supervised, so it leaks no labels -- but it does leak *structure*,
+        and :func:`~bindra.training.pretrain.train_only_molecules` can only
+        exclude the held-out molecules of the split it was given. An encoder
+        pretrained for ``random_pair`` has seen graphs that ``cold_drug`` puts
+        in its test set, and the same is true across two *rebuilds* of one
+        regime: a different ``split_id`` is a different train set. Either
+        mismatch is refused here rather than warned about, because the run it
+        would produce looks entirely normal and its held-out numbers would be
+        quietly inflated. The fix is to pretrain again for the split in hand;
+        there is no flag to proceed, on purpose.
+
+        Returns the identity string recorded in provenance.
+        """
+        import hashlib
+
+        path = Path(path)
+        if not path.exists():
+            raise LigandArmError(
+                f"no ligand checkpoint at {path}. Refusing to train from random "
+                "weights when a pretrained checkpoint was requested."
+            )
+        payload = torch.load(path, map_location="cpu", weights_only=False)
+        if not isinstance(payload, dict) or payload.get("kind") != PRETRAIN_CHECKPOINT_KIND:
+            # Not ours. The only other thing it can legitimately be is the
+            # published base.pth, whose loader is strict and will say so if it
+            # is neither.
+            return self.load_pretrained(path)
+
+        expected = self.config.to_model_kwargs()
+        stored = dict(payload.get("model_kwargs") or {})
+        differences = {
+            key: (stored.get(key), value)
+            for key, value in expected.items()
+            if stored.get(key) != value
+        }
+        if differences:
+            detail = ", ".join(
+                f"{key}: checkpoint {was!r} against this arm's {now!r}"
+                for key, (was, now) in sorted(differences.items())
+            )
+            raise LigandArmError(
+                f"{path.name} was pretrained for a different LiGhT shape ({detail}). "
+                "Loading it would fail on tensor shapes one layer at a time; it is "
+                "refused here with the mismatch named instead."
+            )
+
+        provenance = dict(payload.get("provenance") or {})
+        stored_regime = provenance.get("split_regime")
+        if regime is not None and stored_regime is not None and stored_regime != regime:
+            raise LigandArmError(
+                f"{path.name} was pretrained on the {stored_regime!r} split and this "
+                f"run trains on {regime!r}. The two hold out different molecules, so "
+                f"the encoder has already seen graphs that {regime!r} evaluates on. "
+                f"Pretrain again with `bindra pretrain --regime {regime}`."
+            )
+        stored_split = provenance.get("split_id")
+        if split_id is not None and stored_split is not None and stored_split != split_id:
+            raise LigandArmError(
+                f"{path.name} was pretrained against split_id {stored_split!r} and "
+                f"this run uses {split_id!r}. Same regime, different partitioning: "
+                "the molecules held out then are not the ones held out now. Pretrain "
+                "again against the current split."
+            )
+
+        self.module.load_state_dict(payload["model_state_dict"], strict=True)
+        # A state-dict load does not restore requires_grad.
+        self.apply_freezing()
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+        epoch = payload.get("epoch")
+        self.pretrained_checkpoint = (
+            f"{path.name}@{digest}"
+            + (f" (pretrain epoch {epoch})" if epoch is not None else "")
+        )
         return self.pretrained_checkpoint
 
     def collate_smiles(self, smiles: Sequence[str]) -> KPGTLigandBatch:

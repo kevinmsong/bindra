@@ -240,6 +240,34 @@ def cmd_fit(args) -> int:
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"[{OK}] model: {trainable:,} trainable parameters", flush=True)
 
+    # Pretrained ligand weights, before anything reads the arm's identity.
+    # `_ligand_metadata` reports `pretrained_checkpoint` into provenance, so
+    # loading after that point would record the run as untrained while training
+    # a pretrained encoder.
+    if args.ligand_checkpoint:
+        from bindra.encoders.ligand_arm import LigandArmError
+
+        manifest = json.loads(
+            (split_directory / "manifest.json").read_text(encoding="utf-8")
+        )
+        try:
+            identity = model.ligand_encoder.load_ligand_checkpoint(
+                Path(args.ligand_checkpoint),
+                regime=manifest["regime"],
+                split_id=manifest["split_id"],
+            )
+        except LigandArmError as exc:
+            print(f"[{FAIL}] {exc}", flush=True)
+            return 2
+        print(f"[{OK}] ligand arm initialised from {identity}", flush=True)
+    else:
+        print(
+            f"[{INFO}] no --ligand-checkpoint: the ligand arm starts from random "
+            "initialisation. `bindra pretrain` produces one, and running it after "
+            "this means training the affinity model twice.",
+            flush=True,
+        )
+
     # Neither guard is reachable from the flags any more: the CLI builds only
     # LiGhT-mini, which trains every weight it has. They are kept because a
     # config built in library code still can reach them, and because the second
@@ -367,6 +395,14 @@ def build_parser():
         "-v", "--verbose", action="store_true",
         help="Per-step detail: loss terms, gradient norm, batch shape, data wait. "
              "Implies --log-every 1 unless you set it explicitly.",
+    )
+    parser.add_argument(
+        "--ligand-checkpoint", default=None,
+        help="Pretrained LiGhT weights from `bindra pretrain`. The regime and "
+             "split id recorded in it must match this run: pre-training leaks no "
+             "labels but it does leak structure, so an encoder pretrained against "
+             "another split has already seen molecules this one evaluates on. A "
+             "published base.pth is accepted here too and loaded strictly.",
     )
     parser.add_argument("--resume", default=None)
     return parser

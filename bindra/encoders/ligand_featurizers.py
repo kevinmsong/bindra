@@ -10,11 +10,18 @@ featurizers here are module-level functions, and
 
 ## What crosses the process boundary
 
-Only SMILES go out. For the GAT arm a small graph comes back; for KPGT a graph
-plus a 512-bit fingerprint and 200 descriptors, about 3 KiB a molecule. Both are
-negligible against the protein tensor, which is ~144 MiB a batch and
-deliberately never crosses -- it is read from the memory-mapped cache in the
-parent.
+Only SMILES go out. What comes back is a triplet graph plus a 512-bit
+fingerprint and 200 descriptors: **78.8 KiB a molecule**, measured by pickling
+2,048 real curated molecules. An earlier version of this paragraph said "about
+3 KiB", which was an estimate of the two knowledge vectors (2.8 KiB) with the
+graph's path encodings left out -- a 26x error. At batch 512 that is 40 MiB
+crossing the pipe per batch.
+
+It is still negligible against the protein tensor, which is ~144 MiB a batch
+and deliberately never crosses -- it is read from the memory-mapped cache in the
+parent -- and the parent's side of the trip is cheap in any case: unpickling and
+collating together cap out at 11,964 mol/s against the 525 mol/s the workers can
+supply. The cost is RDKit's, not the boundary's.
 
 Putting KPGT's descriptors **in the pool** is the whole point rather than an
 incidental: they are the expensive part of that arm (~200 RDKit descriptors per
@@ -123,7 +130,19 @@ def featurize_kpgt_one(smiles: str, cache_dir: str | None = None) -> KPGTMolecul
                 descriptors=descriptors,
             )
 
-    values = np.asarray(_descriptor_generator().process(smiles)[1:], dtype=np.float32)
+    computed = _descriptor_generator().process(smiles)
+    if computed is None:
+        # RDKit2DNormalized returns None for a molecule it cannot parse, and
+        # subscripting that raises TypeError -- which is not in
+        # `featurization_errors`, so it escaped the pool as an opaque traceback
+        # from a worker process rather than naming the molecule. Both the
+        # affinity loader and the pre-training loader catch the arm's own error
+        # and neither catches TypeError.
+        raise LigandArmError(
+            f"the descriptor generator could not parse {smiles!r}; "
+            "RDKit rejected the SMILES"
+        )
+    values = np.asarray(computed[1:], dtype=np.float32)
     if values.shape[0] != N_DESCRIPTORS:
         raise LigandArmError(
             f"descriptor generator produced {values.shape[0]} values for "

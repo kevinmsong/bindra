@@ -22,6 +22,10 @@ COMMANDS: dict[str, tuple[str, str]] = {
     ),
     "make-splits": ("bindra.cli.make_splits", "Build immutable split manifests."),
     "cache": ("bindra.cli.cache", "Populate frozen encoder feature caches."),
+    "pretrain": (
+        "bindra.cli.pretrain",
+        "Knowledge-guided pre-training for the LiGhT ligand arm.",
+    ),
     "train": ("bindra.cli.train", "Train the affinity / retrieval / diffusion stack."),
     "calibrate": ("bindra.cli.calibrate", "Fit conformal calibration on the held-out partition."),
     "predict": ("bindra.cli.predict", "Predict affinity for sequence/SMILES pairs."),

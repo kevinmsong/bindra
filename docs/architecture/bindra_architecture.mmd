@@ -40,9 +40,11 @@ subgraph LIGSEAM["LIGAND SIDE — LiGhT-mini · 1,050,904 wts"]
   subgraph ARMLIGHT["LiGhT — a transformer over bonds"]
     direction TB
     KFEAT["<b>Line graph + knowledge inputs</b><br/>The molecule is rewritten so each <i>bond</i> is a<br/>node. Two extra nodes carry whole-molecule<br/>facts: a 512-bit structural fingerprint and 200<br/>computed properties such as size and greasiness."]
-    KLIGHT["<b>8 transformer layers, 8 heads, width 96</b><br/>Each bond repeatedly looks at bonds up to five<br/>atoms away and updates what it represents.<br/>Trained from scratch; a pre-training pass over<br/>547,629 molecules is available."]
+    KLIGHT["<b>8 transformer layers, 8 heads, width 96</b><br/>Each bond repeatedly looks at bonds up to five<br/>atoms away and updates what it represents."]
+    KPRE["<b>Pre-training, before any affinity run</b><br/>Hide one of the two knowledge nodes and rebuild it<br/>from the molecule plus the other. 540,166 molecules:<br/>those used for training and for nothing else —<br/>anything also appearing in a held-out set, including<br/>the sealed benchmark panels, is excluded."]
     KREAD["<b>Molecule summary → 288 numbers</b><br/>Fingerprint node, property node, and the<br/>average over bonds — kept as three separate<br/>parts rather than blended into one."]
     KFEAT --> KLIGHT --> KREAD
+    KPRE -.->|"initial weights"| KLIGHT
   end
 
   CONTRACT["<b>The seam: what the ligand hands over</b><br/>One vector per bond, plus two masks. The first<br/>says which entries are real rather than padding;<br/>the second says which may be <i>drawn on a<br/>molecule</i>. The two knowledge nodes are real —<br/>the protein attends to them — but not drawable.<br/>Conflating those two questions is what previously<br/>forced them to be discarded."]
@@ -159,7 +161,7 @@ classDef note fill:#F5F5F5,stroke:#767676,stroke-width:1px,color:#333333,font-st
 classDef io fill:#FFFFFF,stroke:#1A1A1A,stroke-width:2px,color:#1A1A1A
 
 class ESMC,CACHE frozen
-class KFEAT,KLIGHT,KREAD,AP,AL,AG,P2L,L2P,FFP,FFL,POOL,HKD,HKI,HIC trained
+class KFEAT,KLIGHT,KREAD,KPRE,AP,AL,AG,P2L,L2P,FFP,FFL,POOL,HKD,HKI,HIC trained
 class BUILD,CONTRACT seam
 class FILM conditioning
 class GATHER,LOCK,DNO gate
