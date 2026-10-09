@@ -333,14 +333,14 @@ def build_parser():
     parser.add_argument("--patience", type=int, default=3)
     parser.add_argument("--ema", type=float, default=0.999)
     parser.add_argument("--dropout", type=float, default=0.1)
-    parser.add_argument("--model-dim", type=int, default=160)
+    parser.add_argument("--model-dim", type=int, default=96)
     parser.add_argument(
         "--knowledge-cache", default="data/cache/knowledge",
         help="Precomputed KPGT fingerprints/descriptors. They are 81%% of ligand "
              "featurization and featurization is what the loop waits on; cached "
              "they read in 2.03 ms/mol against 37.01 live. Pass '' to compute live.",
     )
-    parser.add_argument("--fusion-layers", type=int, default=2)
+    parser.add_argument("--fusion-layers", type=int, default=4)
     parser.add_argument(
         "--feedforward-multiplier", type=int, default=2,
         help="Fusion feed-forward width, as a multiple of --model-dim. At the "

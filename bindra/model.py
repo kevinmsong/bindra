@@ -1,4 +1,4 @@
-"""BINDRA-v0: cached protein features and SMILES in, affinity out.
+"""BINDRA-v1: cached protein features and SMILES in, affinity out.
 
 This is the seam the specification's end-to-end requirement runs through --
 "from target sequence and SMILES through affinity prediction plus iBAM" -- and the
@@ -52,7 +52,12 @@ from bindra.encoders.ligand_arm import (
 )
 from bindra.encoders.ligand_kpgt import KPGTConfig
 from bindra.features.types import EncoderMetadata
-from bindra.fusion.adapters import AdapterConfig, SharedAdapters, masked_mean
+from bindra.fusion.adapters import (
+    AdapterConfig,
+    KnowledgeFiLM,
+    SharedAdapters,
+    masked_mean,
+)
 from bindra.fusion.cross_attention import (
     CrossAttentionConfig,
     CrossAttentionStack,
@@ -63,7 +68,7 @@ from bindra.heads.affinity import AffinityHeadConfig, AffinityHeads, AffinityPre
 #: Name of this architecture, recorded in every provenance block so a results
 #: table says which model produced it. Bump it when the shape changes in a way
 #: that makes two runs incomparable.
-ARCHITECTURE_NAME = "BINDRA-v0"
+ARCHITECTURE_NAME = "BINDRA-v1"
 
 
 class BindraModelError(ValueError):
@@ -112,6 +117,12 @@ class BindraConfig:
     #: block of the pair vector, instead of compressing the concatenation into
     #: one. See ``AdapterConfig.graph_components``. Widens ``pair_dim``.
     split_graph_readout: bool = True
+    #: Let the knowledge vector scale and shift the fused streams, instead of
+    #: only being concatenated alongside them. See
+    #: :class:`~bindra.fusion.adapters.KnowledgeFiLM`. Identity at
+    #: initialisation, so turning it off is a clean ablation rather than a
+    #: different model.
+    film_conditioning: bool = True
     head: AffinityHeadConfig = field(default_factory=AffinityHeadConfig)
 
     def __post_init__(self) -> None:
@@ -165,6 +176,7 @@ class BindraConfig:
             "cross_attention_heads": self.cross_attention_heads,
             "feedforward_multiplier": self.feedforward_multiplier,
             "split_graph_readout": self.split_graph_readout,
+            "film_conditioning": self.film_conditioning,
             "dropout": self.dropout,
             "ligand": self.ligand.to_dict(),  # type: ignore[attr-defined]
             "ligand_arm": type(self.ligand).__name__,
@@ -217,6 +229,20 @@ class BindraModel(nn.Module):
         self.adapters = SharedAdapters(config.adapter_config())
         self.fusion = CrossAttentionStack(config.cross_attention_config())
         self.heads = AffinityHeads(config.pair_dim, config.head)
+        # Constructed LAST, deliberately. Every module above draws from the RNG
+        # stream, so building the conditioner earlier would shift fusion's and
+        # the heads' initialisation and `film_conditioning=False` would differ
+        # from True by more than the conditioner -- the ablation would measure
+        # a different random init at the same time. Built here, the two models
+        # are bit-identical until FiLM itself learns something.
+        #
+        # Conditioning reads the fingerprint and descriptor blocks, so it needs
+        # a split readout to have separated them in the first place.
+        self.film = (
+            KnowledgeFiLM(config.adapter_config())
+            if config.film_conditioning and config.adapter_config().graph_blocks >= 2
+            else None
+        )
         if self.ligand_encoder.token_dim != config.ligand.token_dim:  # type: ignore[attr-defined]
             raise BindraModelError(
                 f"arm reports token_dim {self.ligand_encoder.token_dim} but its "
@@ -269,9 +295,14 @@ class BindraModel(nn.Module):
         adapted = self.adapters(
             protein_features, ligand_tokens, encoded.graph_states
         )
+        conditioned_protein, conditioned_ligand = adapted["protein"], adapted["ligand"]
+        if self.film is not None:
+            conditioned_protein, conditioned_ligand = self.film(
+                adapted["protein"], adapted["ligand"], adapted["ligand_graph"]
+            )
         fused = self.fusion(
-            adapted["protein"],
-            adapted["ligand"],
+            conditioned_protein,
+            conditioned_ligand,
             protein_mask,
             ligand_mask,
             need_attention=need_attention,

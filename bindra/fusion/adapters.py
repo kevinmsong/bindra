@@ -217,6 +217,73 @@ class SharedAdapters(nn.Module):
         )
 
 
+class KnowledgeFiLM(nn.Module):
+    """Let the molecule's knowledge vector *modulate* the fused streams.
+
+    Before this, knowledge reached the output three ways and all of them were
+    **additive**: two tokens the protein may attend to, three blocks of the pair
+    vector, and LiGhT's own mixing into every bond. An additive path can be
+    ignored -- the model is free to learn a zero weight on it and never consult
+    the fingerprint again. FiLM cannot be ignored in the same way: it scales and
+    shifts every residue and every bond representation, so the molecule's global
+    character changes what the protein sees rather than being appended to it.
+
+    The conditioner reads only the **fingerprint and descriptor** blocks of the
+    adapted readout, not the pooled-mean block. The mean is a summary of the
+    bonds that are already being modulated, so conditioning on it would feed the
+    stream back into its own scale.
+
+    **Identity at initialisation.** The final projection starts at zero and the
+    scale is ``1 + delta``, so a freshly built model with FiLM on is
+    bit-identical to one with it off. Without that, switching it on would change
+    the architecture and reinitialise the weights at the same time, and any
+    comparison between the two would measure both at once.
+
+    One consequence of the zero init looks like a bug and is not: ``norm``
+    receives **no gradient on the first step**, because the chain rule runs it
+    through a zero ``project.weight``. Measured: zero at step 1, nonzero at
+    step 2 once ``project`` has moved off zero. Do not "fix" it by initialising
+    ``project`` randomly -- that buys a first-step gradient and loses the
+    identity property, which is the more valuable of the two.
+    """
+
+    def __init__(self, config: AdapterConfig, *, knowledge_blocks: int = 2) -> None:
+        super().__init__()
+        self.config = config
+        self.knowledge_blocks = knowledge_blocks
+        width = knowledge_blocks * config.model_dim
+        self.norm = nn.LayerNorm(width)
+        # Four outputs per feature: scale and shift, for the protein and the
+        # ligand stream.
+        self.project = nn.Linear(width, 4 * config.model_dim)
+        nn.init.zeros_(self.project.weight)
+        nn.init.zeros_(self.project.bias)
+
+    def forward(
+        self,
+        protein: torch.Tensor,
+        ligand: torch.Tensor,
+        ligand_graph: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        model_dim = self.config.model_dim
+        needed = self.knowledge_blocks * model_dim
+        if ligand_graph.shape[-1] < needed:
+            raise AdapterError(
+                f"FiLM needs the first {self.knowledge_blocks} readout blocks "
+                f"({needed} wide) but the adapted readout is "
+                f"{ligand_graph.shape[-1]}; this arm declares fewer components "
+                "than the conditioner expects"
+            )
+        knowledge = self.norm(ligand_graph[..., :needed])
+        scale_protein, shift_protein, scale_ligand, shift_ligand = torch.split(
+            self.project(knowledge), model_dim, dim=-1
+        )
+        # [B, D] -> [B, 1, D], broadcasting over residues and over tokens.
+        protein_out = protein * (1.0 + scale_protein.unsqueeze(-2)) + shift_protein.unsqueeze(-2)
+        ligand_out = ligand * (1.0 + scale_ligand.unsqueeze(-2)) + shift_ligand.unsqueeze(-2)
+        return protein_out, ligand_out
+
+
 def masked_mean(
     features: torch.Tensor, mask: torch.Tensor, *, dim: int = -2
 ) -> torch.Tensor:

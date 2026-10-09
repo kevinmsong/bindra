@@ -1,5 +1,5 @@
 ---
-title: "BINDRA-v0 — 2,669,811 trainable · LiGhT-mini ligand arm · dotted = PLANNED, NOT BUILT"
+title: "BINDRA-v1 — 1,995,547 trainable · LiGhT-mini, pre-trainable · dotted = PLANNED, NOT BUILT"
 config:
   flowchart:
     wrappingWidth: 420
@@ -22,51 +22,51 @@ subgraph PROT["PROTEIN ENCODER — FROZEN"]
   ESMC -->|"encode once"| CACHE
 end
 
-subgraph LIGSEAM["LIGAND ARM — LiGhT-mini · 1,032,560 params #40;38.7%#41;"]
+subgraph LIGSEAM["LIGAND ARM — LiGhT-mini · 1,050,904 params #40;52.7%#41;"]
   direction LR
   BUILD["LigandBatchBuilder<br/>carries the arm NAME, so it and its featurizer<br/>pickle for the process pool<br/>72% of the batch build, GIL-bound in RDKit<br/>only SMILES cross; the ~144 MiB protein tensor never does"]
 
   subgraph ARMLIGHT["LiGhT — trained FROM SCRATCH, no pre-training"]
     direction TB
     KFEAT["Line graph + knowledge inputs<br/>137-dim atom, 14-dim bond<br/>512-bit fingerprint, 200 descriptors<br/>descriptors dominate; computed in the pool"]
-    KLIGHT["LiGhT triplet transformer, pure PyTorch<br/>6.9e-06 vs the DGL reference<br/>dim 128, 4 layers, 8 heads<br/>every weight trains: embeddings and attention<br/>biases included, which no partial unfreeze reaches"]
-    KREAD["readout: fp ++ md ++ mean → 384"]
+    KLIGHT["LiGhT triplet transformer, pure PyTorch<br/>PRE-TRAINABLE: bindra pretrain cross-predicts<br/>the masked knowledge nodes on train-only molecules<br/>6.9e-06 vs the DGL reference<br/>dim 96, 8 layers, 8 heads #40;head_dim 12#41;<br/>every weight trains: embeddings and attention<br/>biases included, which no partial unfreeze reaches"]
+    KREAD["readout: fp ++ md ++ mean → 288"]
     KFEAT --> KLIGHT --> KREAD
   end
 
-  CONTRACT["FusionTokens — the seam<br/>tokens [B, T, 128] + token_mask + PHYSICAL_MASK<br/>graph_states [B, 384]<br/>──────────────<br/>1 token = 1 BOND, or 1 unbonded atom,<br/>or a knowledge node<br/>knowledge nodes ATTEND but are not physical:<br/>two masks, because 'may attention see this'<br/>and 'may iBAM draw this' are different questions"]
+  CONTRACT["FusionTokens — the seam<br/>tokens [B, T, 96] + token_mask + PHYSICAL_MASK<br/>graph_states [B, 288]<br/>──────────────<br/>1 token = 1 BOND, or 1 unbonded atom,<br/>or a knowledge node<br/>knowledge nodes ATTEND but are not physical:<br/>two masks, because 'may attention see this'<br/>and 'may iBAM draw this' are different questions"]
 
   BUILD --> ARMLIGHT
   KLIGHT --> CONTRACT
   KREAD --> CONTRACT
 end
 
-subgraph ADPT["SHARED ADAPTERS — one instance, every task · 271,968 params"]
+subgraph ADPT["SHARED ADAPTERS — one instance, every task · 151,968 params"]
   direction LR
-  AP["protein<br/>LN#40;1152#41; → 160"]
-  AL["ligand tokens<br/>LN#40;128#41; → 160"]
-  AG["ligand graph — ONE PROJECTION PER PART<br/>fp → 160 · md → 160 · mean → 160<br/>the readout is three things; compressing all<br/>of it into one block was the bottleneck"]
+  AP["protein<br/>LN#40;1152#41; → 96"]
+  AL["ligand tokens<br/>LN#40;96#41; → 96"]
+  AG["ligand graph — ONE PROJECTION PER PART<br/>fp → 96 · md → 96 · mean → 96<br/>the readout is three things; compressing all<br/>of it into one block was the bottleneck"]
 end
 
-subgraph FUSE["BIDIRECTIONAL CROSS-ATTENTION — 2 layers x 8 heads, FFN x2 · 826,240 params #40;30.9%#41;"]
+subgraph FUSE["BIDIRECTIONAL CROSS-ATTENTION — 4 layers x 8 heads, FFN x2 · 598,272 params #40;30.0%#41;"]
   direction TB
   P2L["protein → ligand<br/>Q residues, K/V tokens<br/>masked by LIGAND mask"]
   L2P["ligand → protein<br/>Q tokens, K/V residues<br/>masked by PROTEIN mask"]
   NOTE["Separate parameters, run in PARALLEL<br/>NOT transposes of each other"]
-  FFP["protein FFN 160-320-160<br/>+ residual + LN + re-mask"]
-  FFL["ligand FFN 160-320-160<br/>+ residual + LN + re-mask"]
+  FFP["protein FFN 96-192-96<br/>+ residual + LN + re-mask"]
+  FFL["ligand FFN 96-192-96<br/>+ residual + LN + re-mask"]
   P2L --- NOTE --- L2P
   P2L --> FFP
   L2P --> FFL
 end
 
-POOL["MASKED POOLING → [B, 960] — SIX blocks<br/>fused residues ++ fused tokens ++ PRE-fusion protein<br/>++ fp ++ md ++ mean<br/>the pre-fusion block is a path that does not depend<br/>on attention having found anything"]
+POOL["MASKED POOLING → [B, 576] — SIX blocks<br/>fused residues ++ fused tokens ++ PRE-fusion protein<br/>++ fp ++ md ++ mean<br/>the pre-fusion block is a path that does not depend<br/>on attention having found anything"]
 
-subgraph HEAD["ENDPOINT HEADS — three INDEPENDENT trunks · 539,043 params"]
+subgraph HEAD["ENDPOINT HEADS — three INDEPENDENT trunks · 194,403 params"]
   direction LR
-  HKD["pKd<br/>960-160-160-1"]
-  HKI["pKi<br/>960-160-160-1"]
-  HIC["pIC50<br/>960-160-160-1"]
+  HKD["pKd<br/>576-96-96-1"]
+  HKI["pKi<br/>576-96-96-1"]
+  HIC["pIC50<br/>576-96-96-1"]
 end
 
 GATHER{{"gather ONLY the measured endpoint<br/>no fabricated zero label exists"}}

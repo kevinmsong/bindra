@@ -235,25 +235,31 @@ class KPGTConfig:
         bond-level triplet tokens and the two knowledge nodes; it has no
         pre-trained weights and supports no claim about KPGT.
 
-        **2,232,352 trainable parameters** against the GAT arm's 2,101,120 — 6%
-        apart, so a comparison between the two arms is about bond-level versus
-        atom-level tokens and the knowledge inputs, not about capacity. Whole
-        models: 9,324,195 trainable against v2-mid's 9,254,787, within 0.8%.
-        That is the only reason these particular numbers were chosen; they are
-        not tuned, and no sweep has been run.
+        **1,050,904 trainable parameters**, in a whole model of 1,995,547 --
+        25% smaller than the v0 shape it replaces, while carrying *twice* the
+        attention maps: 32 cross-attention and 64 bond maps against 16 and 32.
+
+        That is not a trade, it is an artefact of where parameters live.
+        Multi-head attention's projections are ``model_dim x model_dim``
+        whatever the head count, and depth costs linearly where width costs
+        quadratically. So 8 layers at ``d_g_feats=96`` is both smaller and
+        finer-grained than 4 layers at 128. ``head_dim`` stays at 12, because
+        buying maps with head count instead would have driven it to 8 and
+        risked accuracy to purchase interpretability.
 
         It is small because the published ``base.pth`` is not obtainable here
         (see ``docs/STATUS.md``). A 91.9M-parameter transformer learning from
-        random initialisation on this corpus is not a serious proposition; a
-        2.2M one, matched to a baseline that works, is.
+        random initialisation on this corpus is not a serious proposition.
+        ``from_scratch`` is the default for that reason, and
+        ``bindra pretrain`` is how it stops being true.
         """
         defaults = dict(
-            d_g_feats=128,
-            n_mol_layers=4,
+            d_g_feats=96,
+            n_mol_layers=8,
             n_heads=8,
             d_hpath_ratio=4,
             path_length=5,
-            n_trainable_layers=4,
+            n_trainable_layers=8,
             from_scratch=True,
         )
         defaults.update(overrides)

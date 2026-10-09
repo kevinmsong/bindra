@@ -69,9 +69,14 @@ class BondMap:
     #: Per-layer, per-head, unaveraged, for a reader who wants the detail the
     #: mean throws away.
     by_layer_head: np.ndarray  # [n_layers, n_heads, n_bonds, n_bonds]
-    #: Share of attention variance explained by path length alone. High means
-    #: the map is topology, not chemistry.
+    #: Share of attention variance explained by path length alone, pooled over
+    #: layers. High means the map is topology, not chemistry.
     distance_r2: float
+    #: The same, **per layer**. Pooling hides the question worth asking: an
+    #: early layer restating the graph while a later one departs from it is a
+    #: very different finding from every layer restating it, and the pooled
+    #: number cannot tell them apart.
+    distance_r2_by_layer: tuple[float, ...] = ()
     disclaimer: str = (
         "Attention over a learned encoder's line graph. NOT bond order, bond "
         "strength, reactivity, or a chemical interaction."
@@ -161,6 +166,9 @@ def build_bond_map(
         ),
         by_layer_head=by_layer_head,
         distance_r2=distance_control(attention, distance_bias, live),
+        distance_r2_by_layer=tuple(
+            distance_control((layer,), distance_bias, live) for layer in attention
+        ),
     )
 
 

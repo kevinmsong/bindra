@@ -266,12 +266,20 @@ class TestLiGhTMini:
     """
 
     def test_the_default_mini_size_is_pinned(self) -> None:
-        """A silent size change would invalidate every recorded comparison."""
+        """A silent size change would invalidate every recorded comparison.
+
+        Pins the shape as well as the count: two different configurations can
+        land on the same parameter total, and the attention-map resolution
+        depends on the depth, not the total.
+        """
+        from bindra.encoders.ligand_kpgt import KPGTConfig as _C
+
+        assert (_C.mini().d_g_feats, _C.mini().n_mol_layers, _C.mini().n_heads) == (96, 8, 8)
         from bindra.encoders.ligand_kpgt import KPGTConfig
 
         arm = build_ligand_arm(KPGTConfig.mini())
         trainable = sum(p.numel() for p in arm.module.parameters() if p.requires_grad)
-        assert trainable == 1_032_560
+        assert trainable == 1_050_904
 
     def test_from_scratch_trains_the_embeddings(self) -> None:
         """The whole reason `from_scratch` is a regime and not a bigger count.
@@ -354,7 +362,7 @@ class TestLiGhTMini:
         assert not changed, f"metadata froze {len(changed)} parameters: {changed[:4]}"
         assert sum(
             p.numel() for p in arm.module.parameters() if p.requires_grad
-        ) == 1_032_560
+        ) == 1_050_904
 
     @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
     def test_an_unbonded_atom_survives_autocast(self, dtype) -> None:
@@ -434,6 +442,78 @@ class TestLiGhTMini:
         # trip_fortrans.N only fires for a path of length N, so allow those.
         dead = [n for n in dead if "trip_fortrans" not in n]
         assert not dead, dead
+
+
+class TestKnowledgeFiLM:
+    """Conditioning, and the two properties that make it safe to compare.
+
+    ``test_identity_at_initialisation`` is the load-bearing one. If a model
+    with FiLM on is not bit-identical to one with it off before training, then
+    turning it on changes the architecture *and* reinitialises the weights, and
+    the ablation measures both at once.
+    """
+
+    def _pair(self):
+        from bindra.heads.affinity import AffinityHeadConfig
+
+        built = []
+        for film in (True, False):
+            torch.manual_seed(0)
+            built.append(
+                BindraModel(
+                    BindraConfig(
+                        protein_dim=32, ligand=kpgt_config(), model_dim=16,
+                        cross_attention_layers=2, cross_attention_heads=4,
+                        dropout=0.0, film_conditioning=film,
+                        head=AffinityHeadConfig(hidden_dim=16, dropout=0.0),
+                    )
+                ).eval()
+            )
+        return built
+
+    def test_identity_at_initialisation(self) -> None:
+        on, off = self._pair()
+        features, mask = protein(3)
+        with torch.no_grad():
+            a = on.predict(features, mask, MOLECULES).prediction
+            b = off.predict(features, mask, MOLECULES).prediction
+        endpoint = torch.zeros(3, dtype=torch.long)
+        assert torch.equal(a.observed(endpoint), b.observed(endpoint))
+
+    def test_the_conditioner_is_built_last(self) -> None:
+        """Because every module above it draws from the same RNG stream.
+
+        Built earlier, it shifts fusion's and the heads' initialisation, and
+        the identity above silently fails. This pins the ordering so a tidy-up
+        that moves the attribute cannot reintroduce it.
+        """
+        on, off = self._pair()
+        for (a, pa), (b, pb) in zip(
+            ((n, p) for n, p in on.named_parameters() if not n.startswith("film.")),
+            off.named_parameters(),
+        ):
+            assert a == b and torch.equal(pa, pb), a
+
+    def test_gradient_reaches_the_conditioner(self) -> None:
+        on, _ = self._pair()
+        features, mask = protein(3)
+        out = on.predict(features, mask, MOLECULES)
+        out.prediction.observed(torch.zeros(3, dtype=torch.long)).sum().backward()
+        grad = on.film.project.weight.grad
+        assert grad is not None and grad.abs().sum() > 0
+
+    def test_it_is_off_when_the_readout_has_too_few_blocks(self) -> None:
+        """An arm with a unitary readout has no knowledge blocks to read."""
+        from bindra.heads.affinity import AffinityHeadConfig
+
+        model = BindraModel(
+            BindraConfig(
+                protein_dim=32, ligand=kpgt_config(), model_dim=16,
+                split_graph_readout=False, film_conditioning=True,
+                head=AffinityHeadConfig(hidden_dim=16),
+            )
+        )
+        assert model.film is None
 
 
 class TestTheBatchBuilder:
