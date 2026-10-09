@@ -7,7 +7,7 @@ benchmarked, and experimentally validated status."*
 This file is that separation. It is the authoritative answer to "does BINDRA do X
 yet?" — not the presence of a module, not a passing import.
 
-**Last updated:** 2026-10-07 (**BINDRA-v1**: the GAT arm removed entirely, LiGhT
+**Last updated:** 2026-10-07 (**BINDRA-v0**: the GAT arm removed entirely, LiGhT
 the only ligand encoder, and the model cut from 9,254,787 to 2,669,811 trainable
 parameters)
 
@@ -15,7 +15,7 @@ parameters)
 > ligand arm was GAT and GAT is gone. The checkpoint and its recorded numbers
 > (val `exact_rmse` **1.0809**) stand as a historical result; reproducing them
 > needs commit `8c8fa7b` or earlier, where the arm still existed. Nothing in
-> BINDRA-v1 is comparable to it: the arm, the pair vector and the fusion width
+> BINDRA-v0 is comparable to it: the arm, the pair vector and the fusion width
 > all changed.
 
 ## Status vocabulary
@@ -34,7 +34,7 @@ parameters)
 Nothing below is `validated`. Nothing below is `benchmarked`: no model has ever
 been scored on the locked panels.
 
-**`BINDRA-v1` is not `trained`.** It is built and tested — 959 tests, a verified
+**`BINDRA-v0` is not `trained`.** It is built and tested — 959 tests, a verified
 forward and backward pass, every shared module receiving gradient — and it has
 never seen the corpus. The two models that were trained used the GAT arm, which
 no longer exists, so **there is currently no BINDRA performance number that this
@@ -128,7 +128,7 @@ while `cli/evaluate.py` does not.
 | **KPGT partial fine-tuning** | **implemented** | Last layer unfrozen by default; embeddings and lower layers stay frozen so the representation does not move out from under them. Gradient reach asserted exactly |
 | KPGT wired into `BindraModel` | **implemented** | `bindra/encoders/ligand_arm.py` adds the module-level arm contract (`LigandArm`, `FusionTokens`); `ligand_kpgt_arm.py` adds `KPGTLigandArmModule` and `KPGTLigandBatch`. `BindraConfig.ligand` now takes either config and reads widths through `token_dim`/`graph_dim`, so the model never names an arm. Both arms run end to end and gradients reach every shared prefix. `tests/test_ligand_arm.py`, 23 tests; token counts asserted against **bond** counts, not triplet-count-minus-two, so dropping the wrong two nodes would fail. Full suite 1,082 passed after the refactor, and the trained `v2-mid` checkpoint still loads `strict` at 9,254,787 parameters |
 | Ligand featurization behind the seam | **implemented** | `bindra/encoders/ligand_featurizers.py`; `LigandBatchBuilder` carries the arm *name* so it and its featurizer stay picklable for the process pool, which a bound method or lambda would not. `PairDataset` takes a `ligand_builder`; `build_batch` dispatches through it and catches each arm's own featurization errors. `bindra train --ligand-arm {gat,kpgt}` derives the featurizer from the same config object the model is built from, so the two cannot disagree |
-| **BINDRA-v1 — the whole model** | **implemented** | **2,669,811 trainable**, 3.5x smaller than v2-mid. Ligand arm **1,032,560 (38.7%)**, fusion 826,240 (30.9%), heads 539,043, adapters 271,968. The arm now outweighs the shared stack, which it did not before: at `model_dim` 320 with a 4x feed-forward, fusion was 52.9% against the arm's 23.9%, so an arm comparison was read through a stack twice its size. `model_dim` 160, `--feedforward-multiplier 2`. Named in `ARCHITECTURE_NAME` and written into every provenance block |
+| **BINDRA-v0 — the whole model** | **implemented** | **2,669,811 trainable**, 3.5x smaller than v2-mid. Ligand arm **1,032,560 (38.7%)**, fusion 826,240 (30.9%), heads 539,043, adapters 271,968. The arm now outweighs the shared stack, which it did not before: at `model_dim` 320 with a 4x feed-forward, fusion was 52.9% against the arm's 23.9%, so an arm comparison was read through a stack twice its size. `model_dim` 160, `--feedforward-multiplier 2`. Named in `ARCHITECTURE_NAME` and written into every provenance block |
 | **Single ligand arm: LiGhT-mini** | **implemented** | `KPGTConfig.mini()`: dim 128, 4 layers, 8 heads, trained **from scratch** — a `from_scratch` regime unfreezes the embeddings and attention biases, which no setting of `n_trainable_layers` reaches. Reported as `ligand_light_mini`, never KPGT: the architecture is LiGhT, and the knowledge-guided pre-training the acronym names is exactly what is absent without `base.pth` |
 | GAT arm, and its atom-graph featurizer | **removed** | `ligand_gat.py` and `ligand_graph.py` deleted with their 133 tests. The specification named the legacy GAT as ablation 1 and that ablation is now unavailable; `v2-mid` is unloadable as a consequence. Removal was requested after the trade was stated |
 | Knowledge nodes in cross-attention | **implemented** | They were dropped before fusion, which solved a *drawing* problem at *computation* cost and left the static `graph_states` block as the only route for whole-molecule properties. They are now real tokens the protein attends to, flagged through a second `physical_mask` so iBAM still refuses to paint a fingerprint onto a molecule. `knowledge_tokens_in_fusion=False` restores the drop, which is the ablation |
@@ -726,10 +726,10 @@ defined for a cutoff this model never respected.
   a model with far more parameters, says nothing about generalisation, and must
   never be quoted as a result. It is superseded as evidence of training by the
   completed runs, and is retained only as the wiring check it was.
-- **BINDRA-v1 has not been trained at all.** Every number in this ledger came
+- **BINDRA-v0 has not been trained at all.** Every number in this ledger came
   from the GAT arm, which no longer exists. There is no baseline to beat: the
   recorded 1.0809 belongs to a different arm, a different pair vector and a
-  different fusion width, and nothing in BINDRA-v1 is comparable to it. The
+  different fusion width, and nothing in BINDRA-v0 is comparable to it. The
   first run establishes a new baseline rather than improving on an old one.
 - **LiGhT-mini is not KPGT**, and `base.pth` is still not downloaded. It keeps
   the architecture and the knowledge inputs; the knowledge-guided pre-training

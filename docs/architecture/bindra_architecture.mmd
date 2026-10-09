@@ -1,5 +1,5 @@
 ---
-title: "BINDRA-v1 — 2,669,811 trainable · one ligand arm (LiGhT-mini) · dotted = PLANNED, NOT BUILT"
+title: "BINDRA-v0 — 2,669,811 trainable · LiGhT-mini ligand arm · dotted = PLANNED, NOT BUILT"
 config:
   flowchart:
     wrappingWidth: 420
@@ -80,19 +80,12 @@ subgraph LOSS["LOSS = exact + 1.0 x censored + 0.25 x auxiliary"]
   LAUX["Tier B · weight 0.25<br/>structurally cannot reach<br/>the primary term"]
 end
 
-IBAM["iBAM export · p2l [B,8,L,T] · l2p [B,8,T,L] per layer<br/>unaveraged over heads · residue x token native,<br/>residue x atom DERIVED<br/>──────────────<br/>ranking uses l2p: p2l rows are softmax over tokens,<br/>so every residue total is 1 and cannot rank<br/>a column is a BOND; knowledge columns are flagged<br/>non-physical and are never drawn"]
+IBAM["iBAM export — residue x token AND bond x bond · p2l [B,8,L,T] · l2p [B,8,T,L] per layer<br/>unaveraged over heads · residue x token native,<br/>residue x atom DERIVED<br/>──────────────<br/>ranking uses l2p: p2l rows are softmax over tokens,<br/>so every residue total is 1 and cannot rank<br/>a column is a BOND; knowledge columns are flagged<br/>non-physical and are never drawn<br/>──────────────<br/>BOND MAP #40;new#41;: LiGhT's own bonds-by-bonds attention,<br/>per layer and per head. Rows sum to a constant so they<br/>cannot rank; column sums #40;hub#41; can. Missing row mass is<br/>what a bond drew from the knowledge nodes, reported.<br/>**Gated by a distance control**: a map explained by path<br/>length is topology, not chemistry"]
+
+FISHING["DRUG FISHING — a locked benchmark, not an arm<br/>3,721 targets · 81,971 actives · 37,187 measured<br/>inactives · 1,926,939 property-matched decoys<br/>──────────────<br/>ranking actives against decoys is an evaluation<br/>of the trained predictor, so it needs no retrieval<br/>tower of its own. Listed unscored by `evaluate`<br/>because it asks a different question than affinity"]
 
 LEGEND["LEGEND — solid: built and tested, not yet trained<br/>DOTTED + ✎: PLANNED, NOT BUILT — no code exists; shapes are from the spec"]
 
-%% ============ PLANNED: RETRIEVAL #40;Priority 2#41; ============
-subgraph PRET["✎ RETRIEVAL — PLANNED, NOT BUILT"]
-  direction TB
-  RPROJ["Dual-encoder retrieval heads<br/>──────────────<br/>off the UNCONDITIONED adapters, so each side is<br/>computable without the other member of a pair.<br/>**Never index pair-conditioned cross-attention<br/>embeddings** — they do not exist for a lone ligand"]
-  RANN[("Versioned ANN index<br/>ligand vectors · endpoint-aware query")]
-  RMODE["target fishing: rank a library for a target<br/>analog fishing: seed + neighbourhood filter<br/>#40;Morgan / scaffold#41;, seed and duplicates excluded"]
-  RRANK["shortlist → RERANK with the full cross-attention model<br/>#40;re-enters the trained stack above; drawn as text, not an<br/>edge, because it is a loop#41;<br/>report ANN-approximation and shortlist losses separately"]
-  RPROJ --> RANN --> RMODE --> RRANK
-end
 
 %% ============ PLANNED: DIFFUSION #40;Priority 3#41; ============
 subgraph PDIFF["✎ ANALOG GENERATION — PLANNED, NOT BUILT"]
@@ -115,7 +108,7 @@ subgraph PUNC["✎ CALIBRATED UNCERTAINTY — PLANNED, NOT BUILT"]
   UENS --> UCONF --> UDOM
 end
 
-PLOSS["✎ PLANNED JOINT OBJECTIVE — NOT BUILT<br/>L_total = L_affinity + λ_rank·L_within_assay_ranking<br/>+ λ_retrieval + λ_diffusion + λ_delta·L_measured_analog_delta<br/>+ λ_consistency<br/>──────────────<br/>only L_affinity exists today. Warm up affinity before raising<br/>auxiliary weights; no term may consume test or calibration labels"]
+PLOSS["✎ PLANNED JOINT OBJECTIVE — NOT BUILT<br/>L_total = L_affinity + λ_rank·L_within_assay_ranking<br/>+ λ_diffusion + λ_delta·L_measured_analog_delta<br/>+ λ_consistency<br/>──────────────<br/>only L_affinity exists today. Warm up affinity before raising<br/>auxiliary weights; no term may consume test or calibration labels"]
 
 SEQ --> ESMC
 SMI --> BUILD
@@ -137,14 +130,12 @@ POOL --> HKD & HKI & HIC
 HKD & HKI & HIC --> GATHER
 GATHER --> LEX & LCEN & LAUX
 GATHER -.->|"a finished checkpoint"| LOCK
+LOCK -.-> FISHING
 P2L -.-> IBAM
 L2P -.-> IBAM
 
 %% --- planned wiring. Dotted throughout: none of this exists. ---
 %% Retrieval reads the UNCONDITIONED adapters, never the fused stream.
-AP -.-> RPROJ
-AL -.-> RPROJ
-AG -.-> RPROJ
 
 %% Generation is conditioned by the fused pair and by iBAM, per Upgrade A.
 FFP -.-> DCOND
@@ -154,7 +145,6 @@ IBAM -.->|"edit context"| DCOND
 %% Uncertainty wraps the trained predictor rather than sitting inside it.
 GATHER -.-> UENS
 LEX -.-> PLOSS
-RRANK -.-> PLOSS
 DDEN -.-> PLOSS
 
 classDef frozen fill:#e8eaf0,stroke:#6b7280,stroke-width:2px,color:#111827
@@ -182,6 +172,7 @@ class HKD,HKI,HIC trained
 class LEX,LCEN,LAUX lossbox
 class NOTE,IBAM,WIDTH note
 class SEQ,SMI io
-class RPROJ,RANN,RMODE,RRANK,DCOND,DDEN,DDEC,DSCORE,UENS,UCONF,UDOM,PLOSS planned
+class DCOND,DDEN,DDEC,DSCORE,UENS,UCONF,UDOM,PLOSS planned
 class DNO plannedgate
 class LEGEND legend
+class FISHING planned
