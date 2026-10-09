@@ -1,5 +1,5 @@
 ---
-title: "BINDRA-v1 · 2,070,043 trainable parameters · solid = built and tested, dashed = planned"
+title: "BINDRA-v1 · 2,070,043 trainable parameters"
 config:
   theme: base
   themeVariables:
@@ -13,156 +13,215 @@ config:
   themeCSS: "text, .nodeLabel, .edgeLabel, .cluster-label, span, p { font-family: Arial, Helvetica, sans-serif !important; }"
   flowchart:
     htmlLabels: false
-    wrappingWidth: 312
-    nodeSpacing: 30
-    rankSpacing: 40
-    padding: 8
+    wrappingWidth: 345
+    nodeSpacing: 26
+    rankSpacing: 36
+    padding: 7
 ---
 flowchart TB
 
-%% RENDERING NOTES -- this file is compiled by mermaid-cli, and three of its
-%% settings are there to survive that compiler rather than to taste:
+%% RENDERING NOTES -- compiled by mermaid-cli via scripts/render_architecture.sh.
+%% Three settings exist to survive that compiler rather than to taste:
 %% -
-%% htmlLabels: false. With HTML labels, mermaid measures a subgraph title in
-%%   one font and clips it in another, which is how earlier PNGs rendered
-%%   "ENCODER", "UNCERTAINT", "NOT BI" and "HOW ERROR IS COUNTI". Turning them
-%%   off makes labels real SVG text, measured correctly. The cost is that <b>
-%%   and <br/> stop working, so every label below is a markdown string in
-%%   backticks instead.
-%% -
-%% themeCSS. With htmlLabels off, the theme fontFamily is not applied to SVG
-%%   text and it falls back to a serif face. This forces it back.
-%% -
+%% htmlLabels: false. With HTML labels mermaid measures a subgraph title in one
+%%   font and clips it in another, which produced "ENCODER", "UNCERTAINT" and
+%%   "NOT BI" in earlier PNGs. SVG text is measured correctly. The cost is <b>
+%%   and <br/>, so every label is a markdown string in backticks.
+%% themeCSS. With htmlLabels off the theme font is not applied to SVG text and
+%%   it falls back to serif. This forces it back.
 %% No chains inside a grouping box. A subgraph's `direction` is IGNORED once an
-%%   edge crosses its boundary, so an internal A --> B --> C always costs three
-%%   ranks whatever the direction says. Siblings land on one rank, which is why
-%%   the uncertainty and reporting boxes below list their parts rather than
-%%   wiring them in sequence.
+%%   edge crosses its boundary, so an internal A --> B --> C costs three ranks
+%%   whatever the direction says. Siblings land on one rank.
 %% -
-%% Palette: Okabe-Ito, distinguishable under all three common colour-vision
-%% deficiencies. Nothing is carried by hue alone -- every planned block is also
-%% dashed and prefixed, so the figure survives greyscale.
+%% Also: a four-space indent after a blank line inside a label is a markdown
+%% code block, which renders ** literally. Continuation lines are flush left.
+
+subgraph KEY["COLOUR KEY"]
+  direction LR
+  K1["`**Frozen**`"]
+  K2["`**Trained**`"]
+  K3["`**A seam** between parts`"]
+  K4["`**Conditioning**`"]
+  K5["`**A refusal**`"]
+  K6["`**Error term**`"]
+  K7["`**Planned**`"]
+end
 
 subgraph ENC["ENCODERS"]
   direction LR
 
-  subgraph PROT["PROTEIN · frozen, never trained"]
-    SEQ["`**Protein sequence**
-One amino-acid string per target. Median 454 residues, longest 34,350.`"]
-    ESMC["`**ESM-C 600M** · 573,632,640 weights, all frozen
-572 effective target units cannot fine-tune a model this size without fitting the targets rather than the binding.`"]
+  subgraph PROT["PROTEIN · frozen"]
+    ESMC["`**Protein sequence → ESM-C 600M**
+One amino-acid string per target; median 454
+residues, longest 34,350. Out comes one vector
+per residue, from 573,632,640 **frozen** weights:
+572 effective target units cannot fine-tune a
+model this size without fitting the targets
+rather than the binding.`"]
     CACHE[("`**Residue cache** · 14.0 GiB
-All 10,820 targets encoded once, offline. Re-encoding reproduces it bit-for-bit, which is what makes reuse safe.`")]
-    SEQ --> ESMC --> CACHE
+All 10,820 targets encoded once.
+Reproduces bit-for-bit, which is
+what makes reuse safe.`")]
+    ESMC --> CACHE
   end
 
-  subgraph LIG["LIGAND · LiGhT-mini · 1,050,904 weights"]
-    SMI["`**Ligand SMILES**
-One string per molecule, standardised so the same compound always spells the same.`"]
-    KFEAT["`**Line graph + knowledge**
-Each *bond* becomes a node. Two extra nodes carry whole-molecule facts: a 512-bit fingerprint and 200 computed properties such as size and greasiness.`"]
+  subgraph LIG["LIGAND · LiGhT-mini · 1,050,904"]
+    KFEAT["`**Ligand SMILES → line graph + knowledge**
+One standardised string per molecule, rewritten so
+each *bond* is a node. Two extra nodes hold a
+512-bit fingerprint and 200 computed properties.`"]
     KLIGHT["`**LiGhT** · 8 layers, 8 heads, width 96
-Each bond repeatedly looks at bonds up to five atoms away and updates itself. Its bond-to-bond attention is kept for iBAM.`"]
-    KREAD["`**Molecule summary → 288**
-Fingerprint node, property node, mean over bonds — three parts, never blended into one.`"]
-    SMI --> KFEAT --> KLIGHT --> KREAD
+Each bond looks at bonds up to five
+atoms away. Bond-to-bond attention
+is kept for iBAM.`"]
+    KREAD["`**Summary → 288**
+Fingerprint node, property node, mean
+over bonds — never blended.`"]
+    KFEAT --> KLIGHT --> KREAD
   end
 
-  PRE["`**Pre-training** — done, before any affinity run
-Hide one knowledge node, rebuild it from the molecule plus the other.
+  PRE["`**Pre-training** · done
+Hide one knowledge node, rebuild it
+from the molecule plus the other.
 
-540,166 molecules: training-only, so anything in a held-out set — sealed panels included — is excluded.
+540,166 molecules — training-only,
+so held-out sets and sealed panels
+are excluded.
 
-Held-out loss **0.2002**, 48.8% under a molecule-blind guess.`"]
+Held-out loss **0.2002**, 48.8% under
+a molecule-blind guess.`"]
 end
 
 SEAM["`**The seam: what the ligand hands over**
-One vector per bond, plus *two* masks. The first says which entries are real rather than padding; the second says which may be **drawn on a molecule**. The two knowledge nodes are real — the protein attends to them — but not drawable. Conflating those two questions is what forced them to be discarded before.`"]
+One vector per bond, plus *two* masks — one for what is real rather than padding,
+one for what may be **drawn on a molecule**. The knowledge nodes are real but not
+drawable, and conflating those two questions is what forced them to be discarded before.`"]
 
-subgraph ADPT["SHARED ADAPTERS · one copy · 151,968 weights"]
+subgraph ADPT["SHARED ADAPTERS · one copy · 151,968"]
   AP["`**Protein → 96**
-1152 numbers per residue, narrowed.`"]
+1152 per residue, narrowed.`"]
   AL["`**Bonds → 96**
-96 numbers per bond, normalised.`"]
+96 per bond, normalised.`"]
   AG["`**Summary → 3 × 96**
-Each part projected on its own, so the fingerprint is never averaged in with the computed properties.`"]
+Each part projected on its own, so the
+fingerprint is never averaged in with
+the properties.`"]
 end
 
-FILM["`**Knowledge conditioning · FiLM** · 74,496 weights
-The molecule's global properties *rescale* every residue and every bond, rather than merely being appended at the end. A quantity that is only appended can be ignored; one that multiplies cannot. Starts as an exact no-op, so switching it off compares the same model rather than a different random draw.`"]
+FILM["`**Knowledge conditioning · FiLM** · 74,496
+The molecule's global properties *rescale* every residue and every bond instead of
+being appended at the end — appended can be ignored, multiplied cannot. Starts as an
+exact no-op, so switching it off compares the same model, not a different random draw.`"]
 
-subgraph FUSE["PROTEIN MEETS LIGAND · 4 layers × 8 heads · 598,272 weights"]
+subgraph FUSE["PROTEIN MEETS LIGAND · 4 layers × 8 heads · 598,272"]
   P2L["`**Protein looks at ligand**
-Each residue spreads its attention over the molecule's bonds. Then 96 → 192 → 96, re-masked.`"]
-  NOTE["`Two separate sets of weights, run side by side. Neither sees the other's output, and one is **not** the transpose of the other.`"]
+Each residue spreads attention over the
+molecule's bonds. 96 → 192 → 96.`"]
+  NOTE["`Two separate sets of weights, side by
+side. Neither sees the other's output,
+and one is **not** the transpose of the other.`"]
   L2P["`**Ligand looks at protein**
-Each bond spreads its attention over the residues. Then 96 → 192 → 96, re-masked.`"]
+Each bond spreads attention over the
+residues. 96 → 192 → 96.`"]
 end
 
-POOL["`**One vector for the pair** — 576 numbers in six blocks
-Fused residues · fused bonds · the protein *before* fusion · fingerprint · properties · bond average. That pre-fusion block is a route to an answer which does not depend on attention having found anything useful.`"]
+POOL["`**One vector for the pair** · 576 numbers, six blocks
+Fused residues · fused bonds · the protein *before* fusion · fingerprint · properties · bond average.
+The pre-fusion block is a route to an answer that does not need attention to have found anything.`"]
 
-subgraph HEAD["THREE PREDICTORS · 194,403 weights"]
-  HKD["`**pKd**
-576 → 96 → 96 → 1`"]
-  HKI["`**pKi**
-576 → 96 → 96 → 1`"]
-  HIC["`**pIC50**
-576 → 96 → 96 → 1`"]
+subgraph HEAD["THREE PREDICTORS · 194,403"]
+  HKD["`**pKd** · 576 → 96 → 96 → 1`"]
+  HKI["`**pKi** · 576 → 96 → 96 → 1`"]
+  HIC["`**pIC50** · 576 → 96 → 96 → 1`"]
 end
 
 GATHER{{"`**Score only the endpoint that was measured**
-Kd, Ki and IC50 are different experiments and are never mixed. A measurement that does not exist cannot be given a stand-in value, because no such value is representable.`"}}
+Kd, Ki and IC50 are different experiments and are never mixed. A measurement that
+does not exist cannot be given a stand-in value — no such value is representable.`"}}
 
 subgraph LOSS["HOW ERROR IS COUNTED"]
-  LEX["`**Exact measurements**
-Error below the laboratory's own repeat scatter is free: 0.945 Kd, 0.641 Ki, 0.671 IC50.`"]
-  LCEN["`**Censored measurements** · 16.6%
-Records saying only 'weaker than 10 µM'. Penalised for crossing the bound, never for landing anywhere inside it.`"]
-  LAUX["`**Lower-confidence records**
-Down-weighted to 0.25 and kept structurally apart, so they cannot influence the main term.`"]
-  LRANK["`**Which of two is better** — built, off by default
-Compares only inside one assay, and only when the gap beats that endpoint's repeat scatter. The spec's 0.5 margin is under every floor.`"]
+  LEX["`**Exact**
+Error under the lab's own repeat
+scatter is free: 0.945 Kd, 0.641 Ki,
+0.671 IC50.`"]
+  LCEN["`**Censored** · 16.6%
+'Weaker than 10 µM'. Penalised for
+crossing the bound, never for landing
+inside it.`"]
+  LAUX["`**Lower-confidence**
+Weighted 0.25 and kept structurally
+apart, so they cannot reach the
+main term.`"]
+  LRANK["`**Which of two is better**
+Built, **off by default**. Inside one assay
+only, and only when the gap beats that
+endpoint's repeat scatter.`"]
 end
 
 subgraph AFTER["AFTER TRAINING"]
   direction LR
 
   IBAM["`**iBAM — what the model looked at**
-Every attention map kept per layer and per head, unaveraged: 32 protein-ligand from fusion, 64 bond-bond from LiGhT.
+Every map kept per layer and per head,
+unaveraged: 32 protein-ligand, 64 bond-bond.
 
-**Residue × bond** is native, because a token *is* a bond; residue × atom is derived and labelled as such.
+**Residue × bond** is native, because a token
+*is* a bond. Residue × atom is derived and
+labelled so.
 
-Rows always sum to one, so rows rank nothing — column totals are the orderable direction. The bond map is gated by a control asking whether it says more than 'things near each other are related'.`"]
+Rows sum to one, so rows rank nothing —
+columns are the orderable direction.`"]
 
-  subgraph PUNC["UNCERTAINTY · built; needs 3 trained models"]
+  subgraph PUNC["UNCERTAINTY · needs 3 trained models"]
     UENS["`**Ensemble**
-Three separately trained models; their disagreement is a rough confidence signal. Three passes over *one* model is refused in code.`"]
+Three separately trained models.
+Three passes over *one* model is
+refused in code.`"]
     UCONF["`**Calibrated intervals**
-Split conformal on a slice held apart from training. Too few points to support the quantile returns a *status*, never an invented interval.`"]
+Split conformal on a held-apart slice.
+Too few points returns a *status*, never
+an invented interval.`"]
     UDOM["`**Is this input familiar?**
-Similarity to training molecules only, computed without looking at the ensemble — models can agree confidently about the unseen.`"]
+Similarity to training molecules only —
+an ensemble can agree confidently
+about the unseen.`"]
   end
 
   subgraph GUARD["BEFORE ANY NUMBER IS REPORTED"]
     LOCK{{"`**Benchmark lock**
-Refuses to score a model on the sealed panels when its training set overlaps them. Measured from the split's own records, not guessed from its name: random 60–100%, cold-target 66–69%, **time-based 0%** — the only one that qualifies. Opening is logged and cannot be undone.`"}}
-    FISHING["`**Drug fishing** — an evaluation, not a component
-3,721 targets · 81,971 actives · 37,187 measured inactives · 1,926,939 property-matched decoys. Ranking actives against decoys is a question asked of a finished model, so it needs no tower of its own.`"]
+Refuses to score on the sealed panels when
+training overlaps them. Measured, not guessed
+from the split's name: random 60–100%,
+cold-target 66–69%, **time-based 0%** — the only
+one that qualifies. Opening cannot be undone.`"}}
+    FISHING["`**Drug fishing** — an evaluation, not a part
+3,721 targets · 81,971 actives · 37,187 measured
+inactives · 1,926,939 matched decoys. A question
+asked of a finished model, so it needs no tower.`"]
   end
 end
 
 subgraph PDIFF["ANALOG GENERATION · NOT BUILT"]
   direction LR
   DCOND["`**What it would be told**
-Target, endpoint, the seed molecule, what the model attended to, and which part of the scaffold to preserve.`"]
+Target, endpoint, seed molecule,
+what the model attended to, and
+the scaffold to preserve.`"]
   DDEN["`**Discrete graph diffusion**
-Atoms and bonds corrupted to noise by category and denoised back, with the protected scaffold held fixed throughout.`"]
+Atoms and bonds corrupted to noise
+by category and denoised back,
+scaffold held fixed.`"]
   DDEC["`**Back to a real molecule**
-Decoded with RDKit, sanitised, scaffold re-checked by atom mapping. Validity reported before and after any repair.`"]
-  DNO{{"`Never shown the answer it predicts — unavailable at inference, and it would learn to copy. Sampling is not differentiable, so gradients stop here.`"}}
+RDKit decode, sanitise, scaffold
+re-checked by atom mapping.
+Validity reported before and after.`"]
+  DNO{{"`Never shown the answer it predicts.
+Sampling is not differentiable, so
+gradients stop here.`"}}
   PLOSS["`**Planned: the full objective**
-Affinity + ranking + generation + measured-change terms. Only affinity and ranking exist today.`"]
+Affinity + ranking + generation +
+measured-change. Only affinity and
+ranking exist today.`"]
 end
 
 PRE -.->|"initial weights"| KLIGHT
@@ -171,17 +230,14 @@ KLIGHT --> SEAM
 KREAD --> SEAM
 SEAM --> AL
 SEAM --> AG
-
 AP --> FILM
 AL --> FILM
 AG --> FILM
 FILM --> P2L & L2P
-
 P2L --> POOL
 L2P --> POOL
 AG --> POOL
 AP -.->|"pre-fusion route"| POOL
-
 POOL --> HKD & HKI & HIC
 HKD & HKI & HIC --> GATHER
 GATHER --> LEX & LCEN & LAUX & LRANK
@@ -190,6 +246,8 @@ LCEN --> UENS
 LAUX --> LOCK
 IBAM -.->|"what to edit"| DCOND
 
+%% Okabe-Ito, distinguishable under all three common colour-vision deficiencies.
+%% Nothing is carried by hue alone: every planned block is dashed as well.
 classDef frozen fill:#DCE6F1,stroke:#0072B2,stroke-width:2px,color:#102A43
 classDef trained fill:#D7EEF7,stroke:#56B4E9,stroke-width:2px,color:#0B3C52
 classDef seam fill:#D8EFE4,stroke:#009E73,stroke-width:2px,color:#06402B
@@ -200,12 +258,11 @@ classDef planned fill:#F0E4F3,stroke:#CC79A7,stroke-width:2px,stroke-dasharray:6
 classDef note fill:#F2F2F2,stroke:#767676,stroke-width:1px,color:#333333
 classDef io fill:#FFFFFF,stroke:#1A1A1A,stroke-width:2px,color:#1A1A1A
 
-class ESMC,CACHE frozen
-class KFEAT,KLIGHT,KREAD,PRE,AP,AL,AG,P2L,L2P,POOL,HKD,HKI,HIC,UENS,UCONF,UDOM trained
-class SEAM seam
-class FILM conditioning
-class GATHER,LOCK,DNO gate
-class LEX,LCEN,LAUX,LRANK lossbox
-class DCOND,DDEN,DDEC,PLOSS planned
+class ESMC,CACHE,K1 frozen
+class KFEAT,KLIGHT,KREAD,PRE,AP,AL,AG,P2L,L2P,POOL,HKD,HKI,HIC,UENS,UCONF,UDOM,K2 trained
+class SEAM,K3 seam
+class FILM,K4 conditioning
+class GATHER,LOCK,DNO,K5 gate
+class LEX,LCEN,LAUX,LRANK,K6 lossbox
+class DCOND,DDEN,DDEC,PLOSS,K7 planned
 class NOTE,IBAM,FISHING note
-class SEQ,SMI io
