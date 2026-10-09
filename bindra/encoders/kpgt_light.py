@@ -250,7 +250,8 @@ class TripletTransformer(nn.Module):
         triplet_h: torch.Tensor,
         dist_attn: torch.Tensor,
         path_attn: torch.Tensor,
-    ) -> torch.Tensor:
+        return_attention: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         num_nodes = triplet_h.shape[0]
         head_dim = self.d_feats // self.n_heads
         source, destination = batch.edge_index[0], batch.edge_index[1]
@@ -268,7 +269,11 @@ class TripletTransformer(nn.Module):
         messages = value.reshape(num_nodes, self.n_heads, head_dim)[source]
         messages = (messages * weights.unsqueeze(-1)).reshape(-1, self.d_feats)
         aggregated = segment_sum(messages, destination, num_nodes)
-        return self.node_out_layer(triplet_h, aggregated)
+        output = self.node_out_layer(triplet_h, aggregated)
+        # `weights` is [E, n_heads]: for each destination triplet, a distribution
+        # over the triplets feeding it. Returned only on request -- the training
+        # path never asks, and retaining it per layer costs ~70 KB a molecule.
+        return (output, weights) if return_attention else output
 
 
 class LiGhT(nn.Module):
@@ -371,7 +376,12 @@ class LiGhT(nn.Module):
         path_size = valid.sum(dim=-1, keepdim=True)
         return stacked.sum(dim=-1) / path_size
 
-    def forward(self, batch: KPGTBatch, triplet_h: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        batch: KPGTBatch,
+        triplet_h: torch.Tensor,
+        return_attention: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, tuple[torch.Tensor, ...], torch.Tensor]:
         """Run the full stack.
 
         There is deliberately no "run the frozen prefix under no_grad" option.
@@ -389,8 +399,21 @@ class LiGhT(nn.Module):
         """
         dist_attn = self.dist_attn_layer(self._featurize_path(batch, batch.path))
         path_attn = self.path_attn_layer(self._init_path(triplet_h, batch.path))
+        collected: list[torch.Tensor] = []
         for layer in self.mol_T_layers:
-            triplet_h = layer(batch, triplet_h, dist_attn, path_attn)
+            out = layer(
+                batch, triplet_h, dist_attn, path_attn, return_attention=return_attention
+            )
+            if return_attention:
+                triplet_h, weights = out
+                collected.append(weights)
+            else:
+                triplet_h = out
+        if return_attention:
+            # The learned distance bias is handed back alongside, because the
+            # first question to ask of this attention is whether it is anything
+            # more than a function of path length.
+            return triplet_h, tuple(collected), dist_attn.detach()
         return triplet_h
 
 
@@ -532,14 +555,23 @@ class LiGhTPredictor(nn.Module):
         )
 
     def triplet_states(
-        self, batch: KPGTBatch, fp: torch.Tensor, md: torch.Tensor
-    ) -> torch.Tensor:
-        """Per-triplet representations: the token states iBAM attributes over."""
+        self,
+        batch: KPGTBatch,
+        fp: torch.Tensor,
+        md: torch.Tensor,
+        return_attention: bool = False,
+    ):
+        """Per-triplet representations: the token states iBAM attributes over.
+
+        With ``return_attention`` also yields the per-layer bond-to-bond
+        attention and the learned distance bias, which is what the bond map and
+        its distance control are built from.
+        """
         indicators = batch.vavn
         node_h = self.node_emb(batch.begin_end, indicators)
         edge_h = self.edge_emb(batch.edge_feats, indicators)
         triplet_h = self.triplet_emb(node_h, edge_h, fp, md, indicators)
-        return self.model(batch, triplet_h)
+        return self.model(batch, triplet_h, return_attention=return_attention)
 
     def readout(self, batch: KPGTBatch, triplet_h: torch.Tensor) -> torch.Tensor:
         """``[B, 3 * d_g_feats]``: fingerprint node, descriptor node, mean of the rest.
