@@ -82,6 +82,31 @@ def _ranking_config():
     return RankingLossConfig()
 
 
+def is_out_of_memory(exc: BaseException) -> bool:
+    """True for a memory exhaustion this loop can skip a batch and survive.
+
+    ``torch.OutOfMemoryError`` and ``torch.AcceleratorError`` are **siblings** --
+    both subclass ``RuntimeError`` and neither inherits the other -- so catching
+    the first alone misses every OOM the caching allocator never saw. A kernel
+    that allocates its own workspace raises the second, and
+    ``scaled_dot_product_attention`` is one: it is what killed a run 5m48s in,
+    after the handler had already skipped two batches correctly.
+
+    ``AcceleratorError`` is a generic wrapper around a CUDA driver error, so the
+    message is checked rather than the type. Only memory errors are recoverable.
+    An illegal access leaves the context corrupt, and continuing past one would
+    produce numbers instead of a crash -- which is the worse outcome, and the
+    reason this does not simply catch RuntimeError.
+    """
+    if isinstance(exc, torch.OutOfMemoryError):
+        return True
+    accelerator_error = getattr(torch, "AcceleratorError", None)
+    if accelerator_error is not None and isinstance(exc, accelerator_error):
+        text = str(exc).lower()
+        return "out of memory" in text or "memoryallocation" in text
+    return False
+
+
 class TrainingError(RuntimeError):
     """The run could not proceed as configured."""
 
@@ -653,7 +678,9 @@ class Trainer:
                 # effective rate by accumulate_steps and undo the point of
                 # raising the batch.
                 (loss.total / accumulate).backward()
-            except torch.OutOfMemoryError:
+            except (torch.OutOfMemoryError, RuntimeError) as exc:
+                if not is_out_of_memory(exc):
+                    raise
                 # One batch is 1/22,044 of an epoch; the run is hours. Dying
                 # here to save a single batch is the wrong trade, so the batch
                 # is dropped, counted and reported -- never silently swallowed.
@@ -667,7 +694,8 @@ class Trainer:
                 torch.cuda.empty_cache()
                 print(
                     f"  [oom] skipped batch {index} ({skipped} so far, "
-                    f"{skipped_pairs:,} pairs); emptied the cache and continued",
+                    f"{skipped_pairs:,} pairs) after {type(exc).__name__}; "
+                    "emptied the cache and continued",
                     flush=True,
                 )
                 last_tick = time.perf_counter()

@@ -237,6 +237,31 @@ def _arch_supported(gpu: GpuInfo, arch_list: Sequence[str]) -> bool:
     return False
 
 
+def describe_device(device) -> str:
+    """``cuda:0 (NVIDIA GeForce RTX 5060 Ti, 14.8 of 15.9 GiB free)``.
+
+    The index alone is not an identity. torch enumerates FASTEST_FIRST while
+    nvidia-smi goes by PCI bus, so the same number names different cards in the
+    two tools, and the order is not stable across runs. A log that records only
+    "cuda:1" cannot answer which GPU produced a number, or why a run that fitted
+    yesterday is out of memory today.
+    """
+    import torch
+
+    if getattr(device, "type", str(device)) != "cuda":
+        return str(device)
+    index = device.index if getattr(device, "index", None) is not None else 0
+    try:
+        name = torch.cuda.get_device_properties(index).name
+        free, total = torch.cuda.mem_get_info(index)
+        return (
+            f"cuda:{index} ({name}, {free / 2**30:.1f} of "
+            f"{total / 2**30:.1f} GiB free)"
+        )
+    except Exception:  # noqa: BLE001 - a log line must never end a run
+        return f"cuda:{index}"
+
+
 def select_device(requirement: DeviceRequirement | None = None) -> torch.device:
     """``select_gpu`` as a ``torch.device``, honouring ``allow_cpu``."""
     requirement = requirement or DeviceRequirement()
@@ -255,6 +280,7 @@ __all__ = [
     "DeviceSelectionError",
     "GpuInfo",
     "list_cuda_devices",
+    "describe_device",
     "select_device",
     "select_gpu",
     "torch_build_info",

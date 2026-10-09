@@ -823,3 +823,83 @@ class TestResumeDoesNotRebuildSkippedBatches:
         out = capsys.readouterr().out
         assert "resuming epoch 0 at batch 6 of 10" in out
         assert "4 batches remain" in out
+
+
+class TestOutOfMemoryRecovery:
+    """Which failures a training loop may skip a batch and survive.
+
+    The distinction is the point. An OOM costs one batch out of 20,404; an
+    illegal memory access leaves the CUDA context corrupt, and a loop that
+    continued past one would keep producing numbers. So the predicate is
+    deliberately narrow, and `_train_epoch` re-raises anything it rejects.
+    """
+
+    def test_the_allocators_own_error_is_recoverable(self):
+        from bindra.training.engine import is_out_of_memory
+
+        assert is_out_of_memory(torch.OutOfMemoryError("CUDA out of memory."))
+
+    def test_a_driver_level_oom_is_also_recoverable(self):
+        """The one that killed a real run 5m48s in.
+
+        ``torch.AcceleratorError`` and ``torch.OutOfMemoryError`` are siblings
+        under ``RuntimeError``; neither inherits the other. A kernel that
+        allocates its own workspace -- ``scaled_dot_product_attention`` does --
+        raises the first, which ``except torch.OutOfMemoryError`` never saw.
+        """
+        from bindra.training.engine import is_out_of_memory
+
+        accelerator_error = getattr(torch, "AcceleratorError", None)
+        if accelerator_error is None:
+            pytest.skip("this torch has no AcceleratorError")
+        assert not issubclass(accelerator_error, torch.OutOfMemoryError)
+        assert not issubclass(torch.OutOfMemoryError, accelerator_error)
+        assert is_out_of_memory(accelerator_error("CUDA error: out of memory"))
+
+    def test_an_illegal_access_is_not_recoverable(self):
+        """Continuing past this one produces numbers rather than a crash."""
+        from bindra.training.engine import is_out_of_memory
+
+        accelerator_error = getattr(torch, "AcceleratorError", None)
+        if accelerator_error is None:
+            pytest.skip("this torch has no AcceleratorError")
+        assert not is_out_of_memory(
+            accelerator_error("CUDA error: an illegal memory access was encountered")
+        )
+
+    def test_an_unrelated_runtime_error_is_not_swallowed(self):
+        from bindra.training.engine import is_out_of_memory
+
+        assert not is_out_of_memory(RuntimeError("shape mismatch"))
+        assert not is_out_of_memory(ValueError("bad config"))
+
+
+class TestDeviceDescription:
+    """A device index is not an identity.
+
+    torch enumerates FASTEST_FIRST and nvidia-smi goes by PCI bus, so "cuda:1"
+    names different cards in the two tools -- and the order has been observed to
+    differ between two processes on this machine minutes apart. A run log that
+    records only the index cannot say which GPU produced a number.
+    """
+
+    def test_cpu_describes_as_itself(self):
+        from bindra.runtime.device import describe_device
+
+        assert describe_device(torch.device("cpu")) == "cpu"
+
+    @pytest.mark.gpu
+    def test_a_cuda_device_names_the_card_and_its_memory(self):
+        from bindra.runtime.device import describe_device
+
+        if not torch.cuda.is_available():
+            pytest.skip("no CUDA device")
+        text = describe_device(torch.device("cuda:0"))
+        assert text.startswith("cuda:0 (")
+        assert "GiB free" in text
+
+    def test_a_bad_index_degrades_to_the_index(self):
+        """A log line must never be the thing that ends a run."""
+        from bindra.runtime.device import describe_device
+
+        assert describe_device(torch.device("cuda:99")) == "cuda:99"

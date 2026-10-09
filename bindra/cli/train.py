@@ -133,6 +133,7 @@ def cmd_fit(args) -> int:
     from bindra.model import BindraConfig, BindraModel
     from bindra.runtime.device import (
         DeviceRequirement,
+        describe_device,
         DeviceSelectionError,
         select_device,
     )
@@ -159,7 +160,7 @@ def cmd_fit(args) -> int:
         except DeviceSelectionError as exc:
             print(f"[{FAIL}] {exc}")
             return 1
-    print(f"[{OK}] device {device}", flush=True)
+    print(f"[{OK}] device {describe_device(device)}", flush=True)
 
     protein_metadata = _protein_metadata(processed)
     cache = ProteinFeatureCache(args.protein_cache, metadata=protein_metadata)

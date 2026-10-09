@@ -374,6 +374,7 @@ def cmd_calibrate(args) -> int:
 
     from bindra.runtime.device import (
         DeviceRequirement,
+        describe_device,
         DeviceSelectionError,
         select_device,
     )
@@ -408,7 +409,7 @@ def cmd_calibrate(args) -> int:
         except DeviceSelectionError as exc:
             print(f"[{FAIL}] {exc}")
             return 1
-    print(f"[{OK}] device {device}", flush=True)
+    print(f"[{OK}] device {describe_device(device)}", flush=True)
     print(
         f"[{INFO}] opening the {args.regime!r} cal partition. It is held apart "
         "from train and val and has not been read. This command fits a quantile "

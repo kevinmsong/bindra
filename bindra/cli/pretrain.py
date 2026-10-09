@@ -122,6 +122,7 @@ def cmd_pretrain(args) -> int:
     from bindra.encoders.ligand_kpgt_arm import KPGTLigandArmModule
     from bindra.runtime.device import (
         DeviceRequirement,
+        describe_device,
         DeviceSelectionError,
         select_device,
     )
@@ -151,7 +152,7 @@ def cmd_pretrain(args) -> int:
         except DeviceSelectionError as exc:
             print(f"[{FAIL}] {exc}")
             return 1
-    print(f"[{OK}] device {device}", flush=True)
+    print(f"[{OK}] device {describe_device(device)}", flush=True)
 
     provenance = _split_provenance(processed, split_directory)
     molecules = _molecules(
