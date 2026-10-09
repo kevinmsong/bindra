@@ -1,178 +1,170 @@
 ---
-title: "BINDRA-v1 — 1,995,547 trainable · LiGhT-mini, pre-trainable · dotted = PLANNED, NOT BUILT"
+title: "BINDRA-v1 · 2,070,043 trainable parameters · solid = built and tested, dashed = planned"
 config:
+  theme: base
+  themeVariables:
+    fontFamily: "Inter, Segoe UI, Helvetica Neue, Arial, sans-serif"
+    fontSize: "15px"
+    primaryColor: "#E8F4FA"
+    primaryTextColor: "#1A1A1A"
+    primaryBorderColor: "#0072B2"
+    lineColor: "#4D4D4D"
+    textColor: "#1A1A1A"
   flowchart:
-    wrappingWidth: 420
+    wrappingWidth: 430
     nodeSpacing: 45
-    rankSpacing: 55
+    rankSpacing: 60
 ---
 flowchart TB
 
-%% Solid = built and tested. Dotted + pencil = planned, no code exists.
+%% Palette: Okabe-Ito, which stays distinguishable under all three common
+%% colour-vision deficiencies. Nothing is distinguished by hue alone -- every
+%% planned block is also dashed and prefixed, so the figure survives greyscale.
 
 subgraph IN["INPUTS"]
   direction LR
-  SEQ["Protein sequence<br/>median 454 aa, max 34,350"]
-  SMI["Ligand SMILES<br/>standardized, InChIKey-keyed"]
+  SEQ["<b>Protein sequence</b><br/>One amino-acid string per target.<br/>Median 454 residues, longest 34,350."]
+  SMI["<b>Ligand SMILES</b><br/>One text string per molecule, standardised<br/>so the same compound always spells the same."]
 end
 
-subgraph PROT["PROTEIN ENCODER — FROZEN"]
-  ESMC["ESM-C 600M @ fcc9d36f<br/>573,632,640 params · 0 trainable<br/>2,046-residue windows, mean-merged"]
-  CACHE[("Feature cache<br/>14.023 GiB bf16 · 44 shards<br/>10,820 constructs, bit-identical")]
-  ESMC -->|"encode once"| CACHE
+subgraph PROT["PROTEIN SIDE — frozen, never trained"]
+  ESMC["<b>ESM-C 600M protein language model</b><br/>Turns a sequence into one vector per residue.<br/>573,632,640 weights, all frozen: fine-tuning it<br/>against 572 effective target units would fit the<br/>targets rather than the interaction."]
+  CACHE[("<b>Residue-vector cache</b> · 14.0 GiB<br/>All 10,820 targets encoded once, offline.<br/>Re-encoding reproduces it bit-for-bit, which<br/>is what makes reuse safe.")]
+  ESMC -->|"encoded once, offline"| CACHE
 end
 
-subgraph LIGSEAM["LIGAND ARM — LiGhT-mini · 1,050,904 params #40;52.7%#41;"]
+subgraph LIGSEAM["LIGAND SIDE — LiGhT-mini · 1,050,904 wts"]
   direction LR
-  BUILD["LigandBatchBuilder<br/>carries the arm NAME, so it and its featurizer<br/>pickle for the process pool<br/>72% of the batch build, GIL-bound in RDKit<br/>only SMILES cross; the ~144 MiB protein tensor never does"]
+  BUILD["<b>Batch builder</b><br/>Turns SMILES into graphs across 8 worker<br/>processes. Fingerprints and properties are read<br/>from a precomputed 3.8 GiB cache rather than<br/>recalculated: they were 81% of this step's cost."]
 
-  subgraph ARMLIGHT["LiGhT — trained FROM SCRATCH, no pre-training"]
+  subgraph ARMLIGHT["LiGhT — a transformer over bonds"]
     direction TB
-    KFEAT["Line graph + knowledge inputs<br/>137-dim atom, 14-dim bond<br/>512-bit fingerprint, 200 descriptors<br/>descriptors dominate; computed in the pool"]
-    KLIGHT["LiGhT triplet transformer, pure PyTorch<br/>PRE-TRAINABLE: bindra pretrain cross-predicts<br/>the masked knowledge nodes on train-only molecules<br/>6.9e-06 vs the DGL reference<br/>dim 96, 8 layers, 8 heads #40;head_dim 12#41;<br/>every weight trains: embeddings and attention<br/>biases included, which no partial unfreeze reaches"]
-    KREAD["readout: fp ++ md ++ mean → 288"]
+    KFEAT["<b>Line graph + knowledge inputs</b><br/>The molecule is rewritten so each <i>bond</i> is a<br/>node. Two extra nodes carry whole-molecule<br/>facts: a 512-bit structural fingerprint and 200<br/>computed properties such as size and greasiness."]
+    KLIGHT["<b>8 transformer layers, 8 heads, width 96</b><br/>Each bond repeatedly looks at bonds up to five<br/>atoms away and updates what it represents.<br/>Trained from scratch; a pre-training pass over<br/>547,629 molecules is available."]
+    KREAD["<b>Molecule summary → 288 numbers</b><br/>Fingerprint node, property node, and the<br/>average over bonds — kept as three separate<br/>parts rather than blended into one."]
     KFEAT --> KLIGHT --> KREAD
   end
 
-  CONTRACT["FusionTokens — the seam<br/>tokens [B, T, 96] + token_mask + PHYSICAL_MASK<br/>graph_states [B, 288]<br/>──────────────<br/>1 token = 1 BOND, or 1 unbonded atom,<br/>or a knowledge node<br/>knowledge nodes ATTEND but are not physical:<br/>two masks, because 'may attention see this'<br/>and 'may iBAM draw this' are different questions"]
+  CONTRACT["<b>The seam: what the ligand hands over</b><br/>One vector per bond, plus two masks. The first<br/>says which entries are real rather than padding;<br/>the second says which may be <i>drawn on a<br/>molecule</i>. The two knowledge nodes are real —<br/>the protein attends to them — but not drawable.<br/>Conflating those two questions is what previously<br/>forced them to be discarded."]
 
   BUILD --> ARMLIGHT
   KLIGHT --> CONTRACT
   KREAD --> CONTRACT
 end
 
-subgraph ADPT["SHARED ADAPTERS — one instance, every task · 151,968 params"]
+subgraph ADPT["SHARED ADAPTERS — one copy · 151,968 weights"]
   direction LR
-  AP["protein<br/>LN#40;1152#41; → 96"]
-  AL["ligand tokens<br/>LN#40;96#41; → 96"]
-  AG["ligand graph — ONE PROJECTION PER PART<br/>fp → 96 · md → 96 · mean → 96<br/>the readout is three things; compressing all<br/>of it into one block was the bottleneck"]
+  AP["<b>Protein → width 96</b><br/>1152 numbers per residue, narrowed."]
+  AL["<b>Bonds → width 96</b><br/>96 numbers per bond, normalised."]
+  AG["<b>Molecule summary → 3 × 96</b><br/>Each part projected separately, so the<br/>fingerprint is never averaged together<br/>with the computed properties."]
 end
 
-subgraph FUSE["BIDIRECTIONAL CROSS-ATTENTION — 4 layers x 8 heads, FFN x2 · 598,272 params #40;30.0%#41;"]
+FILM["<b>Knowledge conditioning (FiLM)</b> · 74,496 weights<br/>The molecule's global properties <i>rescale</i> every residue and<br/>every bond, rather than merely being appended at the end.<br/>A quantity that is only appended can be ignored; one that<br/>multiplies cannot. Starts as an exact no-op, so switching it<br/>off compares the same model rather than a different one."]
+
+subgraph FUSE["PROTEIN MEETS LIGAND — 4×8 heads · 598,272 wts"]
   direction TB
-  P2L["protein → ligand<br/>Q residues, K/V tokens<br/>masked by LIGAND mask"]
-  L2P["ligand → protein<br/>Q tokens, K/V residues<br/>masked by PROTEIN mask"]
-  NOTE["Separate parameters, run in PARALLEL<br/>NOT transposes of each other"]
-  FFP["protein FFN 96-192-96<br/>+ residual + LN + re-mask"]
-  FFL["ligand FFN 96-192-96<br/>+ residual + LN + re-mask"]
+  P2L["<b>Protein looks at ligand</b><br/>Each residue spreads its attention over<br/>the molecule's bonds."]
+  L2P["<b>Ligand looks at protein</b><br/>Each bond spreads its attention over<br/>the residues."]
+  NOTE["Two separate sets of weights, run side by side.<br/>Neither sees the other's output, and one is<br/><b>not</b> the transpose of the other."]
+  FFP["Protein refinement<br/>96 → 192 → 96, then re-masked"]
+  FFL["Ligand refinement<br/>96 → 192 → 96, then re-masked"]
   P2L --- NOTE --- L2P
   P2L --> FFP
   L2P --> FFL
 end
 
-POOL["MASKED POOLING → [B, 576] — SIX blocks<br/>fused residues ++ fused tokens ++ PRE-fusion protein<br/>++ fp ++ md ++ mean<br/>the pre-fusion block is a path that does not depend<br/>on attention having found anything"]
+POOL["<b>One vector for the pair</b> — 576 numbers, six blocks<br/>Fused residues · fused bonds · the protein <i>before</i> fusion ·<br/>fingerprint · properties · bond average.<br/>That pre-fusion block is a route to an answer which does<br/>not depend on attention having found anything useful."]
 
-subgraph HEAD["ENDPOINT HEADS — three INDEPENDENT trunks · 194,403 params"]
+subgraph HEAD["THREE PREDICTORS · 194,403 weights"]
   direction LR
-  HKD["pKd<br/>576-96-96-1"]
-  HKI["pKi<br/>576-96-96-1"]
-  HIC["pIC50<br/>576-96-96-1"]
+  HKD["<b>pKd</b><br/>576 → 96 → 96 → 1"]
+  HKI["<b>pKi</b><br/>576 → 96 → 96 → 1"]
+  HIC["<b>pIC50</b><br/>576 → 96 → 96 → 1"]
 end
 
-GATHER{{"gather ONLY the measured endpoint<br/>no fabricated zero label exists"}}
+GATHER{{"<b>Score only the endpoint that was measured</b><br/>Kd, Ki and IC50 are different experiments and are never<br/>mixed. A measurement that does not exist cannot be given<br/>a stand-in value, because no such value is representable."}}
 
-LOCK{{"BENCHMARK LOCK — bindra evaluate --panels<br/>──────────────<br/>refuses a checkpoint whose training set overlaps<br/>the sealed panels, measured against the split's own<br/>id files rather than assumed from the regime name<br/>random_pair 60.2% / 100.0% / 67.7%<br/>cold_target 66.4% / 68.8% / 67.6%<br/>temporal 0% — the only regime the panels can score<br/>──────────────<br/>opening them writes to an access log and cannot<br/>be undone, so the default is refusal"}}
-
-subgraph LOSS["LOSS = exact + 1.0 x censored + 0.25 x auxiliary"]
+subgraph LOSS["HOW ERROR IS COUNTED"]
   direction LR
-  LEX["EXACT · Huber, delta = measured sigma_rep<br/>Kd 0.945 · Ki 0.641 · IC50 0.671<br/>error inside the noise floor is free"]
-  LCEN["CENSORED #40;16.6%#41; · one-sided hinge<br/>then the same Huber<br/>ZERO cost inside the bound"]
-  LAUX["Tier B · weight 0.25<br/>structurally cannot reach<br/>the primary term"]
+  LEX["<b>Exact measurements</b><br/>Error smaller than the laboratory's own<br/>repeat scatter is free: 0.945 for Kd,<br/>0.641 Ki, 0.671 IC50."]
+  LCEN["<b>Censored measurements</b> (16.6%)<br/>Records saying only 'weaker than 10 µM'.<br/>Penalised for crossing the bound, never<br/>for landing anywhere inside it."]
+  LAUX["<b>Lower-confidence records</b><br/>Down-weighted to 0.25 and kept<br/>structurally apart, so they cannot<br/>influence the main term."]
 end
 
-IBAM["iBAM export — residue x token AND bond x bond · p2l [B,8,L,T] · l2p [B,8,T,L] per layer<br/>unaveraged over heads · residue x token native,<br/>residue x atom DERIVED<br/>──────────────<br/>ranking uses l2p: p2l rows are softmax over tokens,<br/>so every residue total is 1 and cannot rank<br/>a column is a BOND; knowledge columns are flagged<br/>non-physical and are never drawn<br/>──────────────<br/>BOND MAP #40;new#41;: LiGhT's own bonds-by-bonds attention,<br/>per layer and per head. Rows sum to a constant so they<br/>cannot rank; column sums #40;hub#41; can. Missing row mass is<br/>what a bond drew from the knowledge nodes, reported.<br/>**Gated by a distance control**: a map explained by path<br/>length is topology, not chemistry"]
+IBAM["<b>iBAM — what the model looked at</b><br/>Every attention map kept per layer and per head,<br/>unaveraged: 32 protein↔ligand, 64 bond↔bond.<br/>──────────────<br/><b>Residue × bond</b> is native here, because a token <i>is</i> a<br/>bond. Residue × atom is derived and labelled as such.<br/>Rows always sum to one, so rows rank nothing — column<br/>totals are the orderable direction.<br/>──────────────<br/><b>Bond map</b>: which parts of a molecule shaped which<br/>other parts. Gated by a control that asks whether it says<br/>more than 'things near each other are related'."]
 
-FISHING["DRUG FISHING — a locked benchmark, not an arm<br/>3,721 targets · 81,971 actives · 37,187 measured<br/>inactives · 1,926,939 property-matched decoys<br/>──────────────<br/>ranking actives against decoys is an evaluation<br/>of the trained predictor, so it needs no retrieval<br/>tower of its own. Listed unscored by `evaluate`<br/>because it asks a different question than affinity"]
-
-LEGEND["LEGEND — solid: built and tested, not yet trained<br/>DOTTED + ✎: PLANNED, NOT BUILT — no code exists; shapes are from the spec"]
-
-
-%% ============ PLANNED: DIFFUSION #40;Priority 3#41; ============
-subgraph PDIFF["✎ ANALOG GENERATION — PLANNED, NOT BUILT"]
+subgraph PUNC["UNCERTAINTY — built, needs 3 models"]
   direction TB
-  DCOND["Conditioning: seed SMILES + scaffold policy from the caller ·<br/>target residues + endpoint · seed ligand<br/>representations · shared cross-attention features ·<br/>iBAM-derived edit context · preserved scaffold with<br/>atom mapping · optional requested affinity change"]
-  DDEN["DiGress-style DISCRETE 2D graph diffusion<br/>categorical forward noising + reverse sampler<br/>denoiser predicts editable atom/bond categories<br/>from the noisy graph, timestep and conditions<br/>scaffold identities and stereochemistry held FIXED"]
-  DDEC["Explicit RDKit decode → sanitize → verify scaffold<br/>by atom mapping → canonical isomeric SMILES<br/>validity reported BEFORE and after any repair"]
-  DSCORE["re-encode candidates, score with the affinity ensemble<br/>#40;candidates re-enter the ligand arm above — also a loop#41;<br/>predicted improvement is a SELECTION HYPOTHESIS"]
-  DNO{{"never condition on the clean product's<br/>representation: it is unavailable at inference<br/>and is a reconstruction shortcut<br/>──────────────<br/>discrete sampling and RDKit conversion are<br/>NOT differentiable — the gradient path stops here"}}
-  DCOND --> DDEN --> DDEC --> DSCORE
-  DDEN --- DNO
-end
-
-%% ============ PLANNED: UNCERTAINTY #40;Priority 4#41; ============
-subgraph PUNC["✎ CALIBRATED UNCERTAINTY — PLANNED, NOT BUILT"]
-  direction TB
-  UENS["3 INDEPENDENTLY trained models<br/>#40;different init and data-order seeds, same partitions#41;<br/>three dropout passes are not three models<br/>report mean and SD in p-units"]
-  UCONF["split conformal on a SEPARATE calibration partition<br/>q = kth smallest |y - mean| · 90% intervals per endpoint<br/>insufficient-calibration status rather than a made-up interval"]
-  UDOM["applicability domain: similarity vs TRAINING entities only<br/>OOD flag reported independently of ensemble spread<br/>no coverage guarantee on a novel target"]
+  UENS["<b>Ensemble</b><br/>Three separately trained models; their<br/>disagreement is a rough confidence signal.<br/>Three passes over <i>one</i> model is refused in<br/>code — it yields a convincing-looking spread<br/>that means nothing."]
+  UCONF["<b>Calibrated intervals</b><br/>Split conformal on a held-apart slice, per<br/>endpoint. Too few points to support the<br/>quantile returns a <i>status</i>, never an<br/>invented interval."]
+  UDOM["<b>Is this input familiar?</b><br/>Similarity to training molecules only, computed<br/>without looking at the ensemble — models can<br/>agree confidently about something they have<br/>never seen."]
   UENS --> UCONF --> UDOM
 end
 
-PLOSS["✎ PLANNED JOINT OBJECTIVE — NOT BUILT<br/>L_total = L_affinity + λ_rank·L_within_assay_ranking<br/>+ λ_diffusion + λ_delta·L_measured_analog_delta<br/>+ λ_consistency<br/>──────────────<br/>only L_affinity exists today. Warm up affinity before raising<br/>auxiliary weights; no term may consume test or calibration labels"]
+LOCK{{"<b>Benchmark lock</b><br/>Refuses to score a model on the sealed panels when its<br/>training set overlaps them. Measured from the split's own<br/>records, not guessed from its name: random split 60–100%<br/>overlap, cold-target 66–69%, <b>time-based split 0%</b> — the<br/>only one that qualifies. Opening the panels is logged and<br/>cannot be undone."}}
+
+FISHING["<b>Drug fishing</b> — an evaluation, not a component<br/>3,721 targets · 81,971 actives · 37,187 measured inactives ·<br/>1,926,939 property-matched decoys. Ranking actives against<br/>decoys is a question asked of a finished model, so it needs<br/>no separate tower of its own."]
+
+subgraph PDIFF["✎ ANALOG GENERATION — NOT BUILT"]
+  direction TB
+  DCOND["<b>What the generator would be told</b><br/>Target, endpoint, the seed molecule, what the<br/>model attended to, and which part of the<br/>scaffold must be preserved."]
+  DDEN["<b>Discrete graph diffusion</b><br/>Atoms and bonds corrupted to noise by category<br/>and denoised back, with the protected scaffold<br/>held fixed throughout."]
+  DDEC["<b>Back to a real molecule</b><br/>Decoded with RDKit, sanitised, scaffold<br/>re-checked by atom mapping. Validity reported<br/>before and after any repair."]
+  DNO{{"Never shown the answer it is predicting — that is<br/>unavailable at inference and would teach it to copy.<br/>Sampling a molecule is not differentiable, so<br/>gradients stop here."}}
+  DCOND --> DDEN --> DDEC
+  DDEN --- DNO
+end
+
+PLOSS["✎ <b>PLANNED: the full training objective</b><br/>Affinity + ranking + generation + measured-change terms.<br/>Only the affinity term exists today."]
 
 SEQ --> ESMC
 SMI --> BUILD
-CACHE -->|"[B, L, 1152] bf16"| AP
-CONTRACT -->|"tokens + mask"| AL
-CONTRACT -->|"graph_states"| AG
+CACHE -->|"one vector per residue"| AP
+CONTRACT -->|"one vector per bond"| AL
+CONTRACT -->|"molecule summary"| AG
 
-AP --> P2L
-AP --> L2P
-AL --> P2L
-AL --> L2P
+AG --> FILM
+AP --> FILM
+AL --> FILM
+FILM --> P2L
+FILM --> L2P
 
 FFP --> POOL
 FFL --> POOL
 AG --> POOL
-AP -.->|"pre-fusion bypass"| POOL
+AP -.->|"pre-fusion route"| POOL
 
 POOL --> HKD & HKI & HIC
 HKD & HKI & HIC --> GATHER
 GATHER --> LEX & LCEN & LAUX
-GATHER -.->|"a finished checkpoint"| LOCK
+GATHER --> UENS
+GATHER -.->|"a finished model"| LOCK
 LOCK -.-> FISHING
 P2L -.-> IBAM
 L2P -.-> IBAM
+KLIGHT -.->|"bond↔bond attention"| IBAM
+IBAM -.->|"what to edit"| DCOND
+DDEC -.-> PLOSS
 
-%% --- planned wiring. Dotted throughout: none of this exists. ---
-%% Retrieval reads the UNCONDITIONED adapters, never the fused stream.
-
-%% Generation is conditioned by the fused pair and by iBAM, per Upgrade A.
-FFP -.-> DCOND
-FFL -.-> DCOND
-IBAM -.->|"edit context"| DCOND
-
-%% Uncertainty wraps the trained predictor rather than sitting inside it.
-GATHER -.-> UENS
-LEX -.-> PLOSS
-DDEN -.-> PLOSS
-
-classDef frozen fill:#e8eaf0,stroke:#6b7280,stroke-width:2px,color:#111827
-classDef trained fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#0c2a6b
-classDef untrained fill:#f1f5f9,stroke:#64748b,stroke-width:2px,stroke-dasharray:6 4,color:#334155
-classDef seam fill:#dcfce7,stroke:#16a34a,stroke-width:2px,color:#14532d
-classDef fusion fill:#ede9fe,stroke:#7c3aed,stroke-width:2px,color:#3b1f78
-classDef lossbox fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#713f12
-classDef gate fill:#fee2e2,stroke:#dc2626,stroke-width:2px,color:#7f1d1d
-classDef note fill:#f8fafc,stroke:#94a3b8,stroke-width:1px,color:#334155,font-style:italic
-classDef io fill:#ffffff,stroke:#334155,stroke-width:2px,color:#0f172a
-%% Planned work: dotted border, washed out, and prefixed with a pencil. No code
-%% exists for any of it; these shapes come from the specification.
-classDef planned fill:#fdf4ff,stroke:#a21caf,stroke-width:2px,stroke-dasharray:2 4,color:#701a75
-classDef plannedgate fill:#fff1f2,stroke:#be123c,stroke-width:2px,stroke-dasharray:2 4,color:#881337
-classDef legend fill:#ffffff,stroke:#0f172a,stroke-width:2px,color:#0f172a
+%% Okabe-Ito. Blue = frozen, sky = trained, green = the seam, orange =
+%% conditioning, vermillion = a refusal, yellow = loss, pink = planned.
+classDef frozen fill:#DCE6F1,stroke:#0072B2,stroke-width:2px,color:#102A43
+classDef trained fill:#D7EEF7,stroke:#56B4E9,stroke-width:2px,color:#0B3C52
+classDef seam fill:#D8EFE4,stroke:#009E73,stroke-width:2px,color:#06402B
+classDef conditioning fill:#FDEBD6,stroke:#E69F00,stroke-width:3px,color:#5A3A00
+classDef gate fill:#FBE0D8,stroke:#D55E00,stroke-width:2px,color:#5C2206
+classDef lossbox fill:#FBF4D4,stroke:#B8960B,stroke-width:2px,color:#4A3B00
+classDef planned fill:#F0E4F3,stroke:#CC79A7,stroke-width:2px,stroke-dasharray:6 4,color:#4F2443
+classDef note fill:#F5F5F5,stroke:#767676,stroke-width:1px,color:#333333,font-style:italic
+classDef io fill:#FFFFFF,stroke:#1A1A1A,stroke-width:2px,color:#1A1A1A
 
 class ESMC,CACHE frozen
-class AP,AL,AG trained
-class KFEAT,KLIGHT,KREAD trained
+class KFEAT,KLIGHT,KREAD,AP,AL,AG,P2L,L2P,FFP,FFL,POOL,HKD,HKI,HIC trained
 class BUILD,CONTRACT seam
-class DROP,GATHER,LOCK gate
-class P2L,L2P,FFP,FFL,POOL fusion
-class HKD,HKI,HIC trained
+class FILM conditioning
+class GATHER,LOCK,DNO gate
 class LEX,LCEN,LAUX lossbox
-class NOTE,IBAM,WIDTH note
+class UENS,UCONF,UDOM trained
+class DCOND,DDEN,DDEC,PLOSS planned
+class NOTE,IBAM,FISHING note
 class SEQ,SMI io
-class DCOND,DDEN,DDEC,DSCORE,UENS,UCONF,UDOM,PLOSS planned
-class DNO plannedgate
-class LEGEND legend
-class FISHING planned
