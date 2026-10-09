@@ -59,6 +59,12 @@ OBSERVATION_COLUMNS = (
     "upper_bound",
     "ic50_tier",
     "primary_regression_eligible",
+    # Read for the within-assay ranking term. BindingDB has no assay
+    # identifier, so `comparability_group_id` is the curation layer's proxy and
+    # the only thing that distinguishes a within-assay comparison from a
+    # cross-experiment one.
+    "comparability_group_id",
+    "ranking_eligible",
 )
 
 

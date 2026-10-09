@@ -141,6 +141,7 @@ while `cli/evaluate.py` does not.
 | **Shared adapters** | **implemented** | `bindra/fusion/adapters.py`; widths read off encoder metadata, nothing hardcodes 1152. `attribute_gradients` discharges "log which parameters receive gradients from each loss" by backpropagating each loss in isolation; a stray `detach()` is caught by test rather than by inspection |
 | **Bidirectional cross-attention** | **implemented** | `bindra/fusion/cross_attention.py`, 41 tests with the adapters. Two independent attention blocks, asserted **not** to be transposes of one another; applied in parallel so the returned maps describe the inputs. Padding invariance asserted end to end; an all-masked side yields zeros rather than NaN |
 | **Per-endpoint heads (pKd/pKi/pIC50)** | **implemented** | `bindra/heads/affinity.py`; three independent trunks, unbounded output. No target exists in the module, so a fabricated zero label is not expressible; gradient to an unmeasured endpoint asserted to be exactly 0 |
+| **Within-assay ranking loss** | **implemented, off by default** | `bindra/training/losses/ranking.py`, 35 tests, both guards mutation-checked. Priority 2. `--ranking-weight 0` is the default and makes it a no-op, so a run without it is bit-identical to one from before the term existed — adding a term changes the objective, and no v1 baseline exists yet to compare against |
 | **Censored affinity loss** | **implemented** | `bindra/training/losses/affinity.py`, 49 tests. Huber delta = **measured sigma_rep per endpoint** (0.945/0.641/0.671), so residuals inside the replicate noise are treated as noise. One-sided penalties for bounds; Tier B structurally confined to the auxiliary term; exact RMSE and bound-violation rate reported separately |
 | **Assembled model** | **implemented** | `bindra/model.py`, 26 tests. **Tiny-data overfit: exact RMSE 7.740 → 0.0264** over 400 steps on 8 pairs across all three endpoints (predicting the label mean gives > 2.0, so the bar excludes the trivial solution). Nonzero shared-module gradients verified per task against the prefixes the model itself declares. Save/reload reproduces inference exactly; atom renumbering changes nothing |
 | **iBAM numeric export** | **implemented** | `bindra/ibam/export.py`, 50 tests with the plots. Native residue x token **and** derived residue x atom views; bond tokens split equally between endpoints per the spec and labelled derived (the flag cannot be turned off). Non-physical token mass is preserved, never dropped. Residue numbering uses original-sequence indices, so the 261 over-window constructs are not misplaced. Aggregation policy fixed in advance and content-hashed into every export |
@@ -216,6 +217,46 @@ representation through `graph_states`, which KPGT's readout builds as
 are kept as physical: they carry one real atom, and the reference's own readout
 counts them via `indicators <= 0`.
 
+### The ranking term, and the margin it does not use
+
+**BindingDB 202610 has no assay identifier in any of its 640 columns**, so
+"within-assay" rests on the curation layer's `comparability_group_id` (target +
+endpoint + citation + condition bucket + source class), with the proxy that
+produced each one recorded in `comparability_scope`. The loss compares only
+inside one group and **refuses to run** when the group id is absent rather than
+falling back to the batch — a cross-group comparison is a cross-experiment one,
+and the loss would fall exactly the same way.
+
+**The specification starts the margin at 0.5 p-units, and this does not use
+it.** 0.5 is below the replicate noise floor of every endpoint (0.945 / 0.641 /
+0.671), so it selects pairs whose measured difference the laboratory's own
+repeats could not resolve. Measured over the corpus's 152,643,122 comparable
+pairs:
+
+| endpoint | pairs | median gap | over 0.5 | over its floor |
+|---|---|---|---|---|
+| pKd | 507,134 | 0.683 | 59.5% | 38.6% |
+| pKi | 4,380,395 | 0.645 | 58.6% | 50.2% |
+| pIC50 | 12,082,254 | 0.577 | 54.7% | 44.7% |
+
+So the floor costs ~21 points of pKd pairs and ~8 of pKi, and buys that every
+retained pair differs by more than replicate scatter. The default margin is the
+per-endpoint floor; `--ranking-margin 0.5` reproduces the specification's value
+for anyone who wants the comparison.
+
+**Censored rows are ranked where their bounds allow it.** 16.6% of the corpus
+is censored, and "weaker than 10 µM" genuinely orders against a 10 nM
+measurement even though it says nothing about where the true value sits. Each
+row is reduced to the interval its record guarantees — `[p, p]` exact,
+`(-∞, u]` or `[l, +∞)` censored — and a pair is used only when those intervals
+are disjoint by more than the margin. Two rows censored on the same side are
+never ordered. Mutation-checked: treating a bound as a value breaks three tests.
+
+The term is added to the **training** loss only. Validation keeps reporting
+affinity alone, because early stopping selects on `exact_rmse` and a validation
+number that changed meaning when a flag was flipped would make two runs
+incomparable.
+
 ## Priorities 3–5 and Upgrades A–C
 
 | Component | Status |
@@ -227,6 +268,51 @@ counts them via `indicators <= 0`.
 | Prospective study support (Upgrade C) | absent |
 | Ensemble + conformal calibration | **implemented** |
 | Applicability-domain reporting | **implemented** |
+| `bindra calibrate` | **implemented, cannot yet be run** | The command exists and is tested; what it needs is **three independently seeded affinity checkpoints**, and none exist — the superseded ones were scrapped and no v1 run has finished. That is a decision about GPU time, not a missing module |
+
+### `bindra calibrate`
+
+`bindra/cli/calibrate.py`, 24 tests. Opens the `cal` partition, which the
+training engine refuses to read, and fits a split-conformal quantile per
+endpoint from an ensemble mean.
+
+**What it refuses.** Fewer than two members, duplicate weight digests, or a
+shared seed — three dropout passes over one model give a spread that plots
+convincingly and means nothing. It also refuses members trained on *different
+splits*, which is not in the specification and is the quieter failure: each
+model is valid, the arithmetic succeeds, and what is gone is the
+exchangeability the guarantee rests on. Both refusals were mutation-checked —
+disabling either guard makes its tests fail.
+
+**What it will not do.** Rank the members, or report per-member accuracy on
+`cal`. A per-member table on a held-apart partition is a model selection, and
+making that selection invalidates the interval being fitted. Ensemble-level
+error *is* reported, because `q` is the 90th percentile of the absolute
+residual and suppressing the residual scale while publishing its quantile would
+be theatre.
+
+**Censoring.** The conformal score is `|y - mean|` and a censored record has no
+`y`. Censored rows are excluded and counted, never imputed to their bound —
+imputing would tighten every interval on the one partition that exists to
+measure honestly.
+
+**Coverage is measured.** `cal` is split in half, the quantile fitted on one
+half and its empirical coverage measured on the other, reported beside the
+final quantile fitted on all of `cal`. Exchangeability is doing real work on a
+corpus with correlated assays and a Kish effective sample size of 572, so a
+coverage figure far from nominal is the only thing that would say it had
+failed.
+
+**The domain pass is the expensive part, and the first version of this command
+would have started a six-hour job from its defaults.** Measured: fingerprinting
+953 mol/s (~13 min for the 767,870 training molecules), Tanimoto 7.0M
+comparisons/s on cpu. Every distinct `cal` molecule against every training one
+is 206,252 x 767,870 = **158G comparisons, ~6.3 hours**. `--domain-sample` now
+defaults to 5,000 (~9 min), the cost is printed before the work starts, and the
+sample and the population it was drawn from are both written into the report.
+`--similarity-device` defaults to cpu, which measured *faster* than cuda here
+(7.0M against 1.8M comparisons/s) — though that cuda figure was taken while a
+pre-training run held the card, so it is a contended one.
 
 ## What this stage established about the corpus
 

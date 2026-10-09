@@ -76,6 +76,12 @@ def _duration(seconds: float) -> str:
     return f"{seconds:.0f}s"
 
 
+def _ranking_config():
+    from bindra.training.losses.ranking import RankingLossConfig
+
+    return RankingLossConfig()
+
+
 class TrainingError(RuntimeError):
     """The run could not proceed as configured."""
 
@@ -138,6 +144,10 @@ class TrainingConfig:
     #: and lost all of it, because nothing had been written yet.
     checkpoint_every_batches: int = 250
     loss: AffinityLossConfig = field(default_factory=AffinityLossConfig)
+    #: Within-assay pairwise ranking. **Weight 0 by default**, which makes this
+    #: a no-op: adding a term changes the objective, and the comparison to a run
+    #: without it is only meaningful if turning it on is deliberate.
+    ranking: "RankingLossConfig" = field(default_factory=lambda: _ranking_config())
 
     def __post_init__(self) -> None:
         if self.amp_dtype not in ("bfloat16", "float16"):
@@ -175,6 +185,9 @@ class TrainingConfig:
             "selection_mode": self.selection_mode,
             "seed": self.seed,
             "loss": self.loss.to_dict(),
+            # Recorded even at weight 0, so a checkpoint states what objective
+            # produced it rather than leaving a reader to assume the default.
+            "ranking": self.ranking.to_dict(),
         }
         return payload
 
@@ -499,6 +512,9 @@ class Trainer:
         self.skipped_batches = 0
         self.best_metric: float | None = None
         self.history: list[dict[str, Any]] = []
+        #: Last batch's ranking diagnostics, for the step logger. None until the
+        #: term runs, which at weight 0 is never.
+        self.last_ranking = None
 
     # -- the loop ---------------------------------------------------------
 
@@ -631,6 +647,7 @@ class Trainer:
                     loss = affinity_loss(
                         output.prediction, batch.targets, config=self.config.loss
                     )
+                    loss = self._add_ranking(loss, output, batch)
                 # Scaled so the accumulated gradient is the mean over
                 # micro-batches rather than their sum, which would scale the
                 # effective rate by accumulate_steps and undo the point of
@@ -762,6 +779,16 @@ class Trainer:
                     f" pad {batch.padding_fraction:.2f}"
                     f" tok {size}"
                 )
+            if self.last_ranking is not None:
+                # Pairs and concordance, not just the term: a ranking loss that
+                # never finds a comparable pair reports 0.0000 and is
+                # indistinguishable from one the model has already satisfied.
+                ranked = self.last_ranking
+                parts.append(
+                    f"rank {float(ranked.loss.detach()):.4f}"
+                    f" ({ranked.n_pairs}/{ranked.n_pairs_available} pairs,"
+                    f" {ranked.n_groups} grp, c-idx {ranked.concordance:.3f})"
+                )
             parts.append(f"wait {share:.0f}%")
             detail = NEWLINE + "        " + "  ".join(parts)
 
@@ -810,6 +837,37 @@ class Trainer:
             if backup is not None and self.ema is not None:
                 self.ema.restore(self.model, backup)
         return metrics.report(self.epoch, split, time.perf_counter() - started)
+
+    def _add_ranking(self, loss, output, batch):
+        """Add the within-assay ranking term, when it is switched on.
+
+        Returns the loss object with ``total`` increased and the ranking
+        diagnostics attached. At weight 0 -- the default -- this returns the
+        input untouched and costs one float comparison, so a run without the
+        term is bit-identical to one from before the term existed.
+
+        The term is added to the **training** loss only. Validation keeps
+        reporting the affinity loss alone, because early stopping selects on
+        ``exact_rmse`` and a validation number that silently changed meaning
+        when a flag was flipped would make two runs incomparable.
+        """
+        import dataclasses
+
+        from bindra.training.losses.ranking import ranking_loss
+
+        if not self.config.ranking.weight:
+            return loss
+        ranked = ranking_loss(
+            output.prediction.observed(batch.targets.endpoint_index),
+            batch.targets,
+            self.config.ranking,
+        )
+        self.last_ranking = ranked
+        if not ranked.n_pairs:
+            return loss
+        return dataclasses.replace(
+            loss, total=loss.total + self.config.ranking.weight * ranked.loss
+        )
 
     # -- discipline -------------------------------------------------------
 

@@ -92,6 +92,22 @@ class AffinityTargets:
     lower_bound: torch.Tensor  # [B] float, NaN where absent
     upper_bound: torch.Tensor  # [B] float, NaN where absent
     is_primary: torch.Tensor  # [B] bool
+    #: Which comparable experiment each row belongs to, as a long tensor.
+    #:
+    #: BindingDB has **no assay identifier anywhere in its 640 columns**, so
+    #: this is the curation layer's proxy (``comparability_group_id``: target +
+    #: endpoint + citation + condition bucket + source class).
+    #: :mod:`bindra.training.losses.ranking` compares only inside one of these
+    #: and refuses to run without them, because a comparison across groups is a
+    #: comparison across experiments.
+    #:
+    #: Optional, and None for a batch built before this existed or by a test
+    #: that does not need it. The ranking term raises on None rather than
+    #: treating the batch as one group.
+    comparability_group: torch.Tensor | None = None
+    #: The curation layer's own verdict on whether a row may be ranked. 95.7%
+    #: of the corpus. Separate from ``is_primary``, which gates the regression.
+    ranking_eligible: torch.Tensor | None = None
 
     def __post_init__(self) -> None:
         size = self.endpoint_index.shape
@@ -99,13 +115,21 @@ class AffinityTargets:
             raise AffinityLossError(
                 f"endpoint_index must be [B], got {tuple(size)}"
             )
-        for name in ("p_value", "is_exact", "lower_bound", "upper_bound", "is_primary"):
+        optional = ("comparability_group", "ranking_eligible")
+        for name in (
+            "p_value", "is_exact", "lower_bound", "upper_bound", "is_primary",
+            *optional,
+        ):
             tensor = getattr(self, name)
+            if tensor is None and name in optional:
+                continue
             if tensor.shape != size:
                 raise AffinityLossError(
                     f"{name} must be {tuple(size)}, got {tuple(tensor.shape)}"
                 )
-        for name in ("is_exact", "is_primary"):
+        for name in ("is_exact", "is_primary", "ranking_eligible"):
+            if getattr(self, name) is None:
+                continue
             if getattr(self, name).dtype is not torch.bool:
                 raise AffinityLossError(
                     f"{name} must be bool, got {getattr(self, name).dtype}"
@@ -144,6 +168,8 @@ class AffinityTargets:
         ``primary_regression_eligible`` with the Tier B exclusion, so a caller
         cannot forget the second half.
         """
+        import pandas as pd
+
         from bindra.heads.affinity import endpoint_indices
 
         import numpy as np
@@ -167,12 +193,29 @@ class AffinityTargets:
             lower_bound=column("lower_bound"),
             upper_bound=column("upper_bound"),
             is_primary=eligible & ~tier_b,
+            # Present on every curated frame; absent only on a hand-built one.
+            comparability_group=(
+                torch.as_tensor(
+                    pd.factorize(frame["comparability_group_id"].astype(str))[0],
+                    dtype=torch.long,
+                )
+                if "comparability_group_id" in frame
+                else None
+            ),
+            ranking_eligible=(
+                flag(frame["ranking_eligible"].to_numpy())
+                if "ranking_eligible" in frame
+                else None
+            ),
         )
         if device is None:
             return targets
         return targets.to(device)
 
     def to(self, device: torch.device | str) -> "AffinityTargets":
+        def move(tensor):
+            return None if tensor is None else tensor.to(device)
+
         return AffinityTargets(
             endpoint_index=self.endpoint_index.to(device),
             p_value=self.p_value.to(device),
@@ -180,6 +223,8 @@ class AffinityTargets:
             lower_bound=self.lower_bound.to(device),
             upper_bound=self.upper_bound.to(device),
             is_primary=self.is_primary.to(device),
+            comparability_group=move(self.comparability_group),
+            ranking_eligible=move(self.ranking_eligible),
         )
 
 

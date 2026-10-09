@@ -300,7 +300,36 @@ def cmd_fit(args) -> int:
     provenance["model"] = config.to_dict()
     provenance["batching"] = policy.to_dict()
 
+    from bindra.training.losses.ranking import RankingLossConfig, margin_per_endpoint
+
+    ranking = RankingLossConfig(
+        weight=args.ranking_weight,
+        margin_scale=args.ranking_margin_scale,
+        margin_override=args.ranking_margin,
+        max_pairs=args.ranking_max_pairs,
+    )
+    if ranking.weight:
+        print(
+            f"[{OK}] within-assay ranking term at weight {ranking.weight}; "
+            f"margins {margin_per_endpoint(ranking)}",
+            flush=True,
+        )
+        print(
+            f"[{INFO}] the margin defaults to each endpoint's measured replicate "
+            "noise floor. The specification's 0.5 is below the floor of every "
+            "endpoint, so it would rank pairs the laboratory could not reproduce; "
+            "pass --ranking-margin 0.5 to reproduce it anyway.",
+            flush=True,
+        )
+    else:
+        print(
+            f"[{INFO}] no ranking term (--ranking-weight 0). The objective is "
+            "affinity alone, which is what every recorded number so far used.",
+            flush=True,
+        )
+
     training = TrainingConfig(
+        ranking=ranking,
         learning_rate=args.lr,
         weight_decay=args.weight_decay,
         epochs=args.epochs,
@@ -403,6 +432,32 @@ def build_parser():
              "labels but it does leak structure, so an encoder pretrained against "
              "another split has already seen molecules this one evaluates on. A "
              "published base.pth is accepted here too and loaded strictly.",
+    )
+    parser.add_argument(
+        "--ranking-weight", type=float, default=0.0,
+        help="Weight on the within-assay pairwise ranking term. 0 disables "
+             "it, which is the default and what every recorded run used: "
+             "adding a term changes the objective, so it turns on "
+             "deliberately rather than by upgrading.",
+    )
+    parser.add_argument(
+        "--ranking-margin", type=float, default=None,
+        help="One margin in p-units for all endpoints, replacing the "
+             "floor-derived per-endpoint margins. The specification starts "
+             "at 0.5, which is BELOW the replicate noise floor of every "
+             "endpoint (0.945/0.641/0.671), so it selects pairs whose "
+             "difference the laboratory could not reproduce.",
+    )
+    parser.add_argument(
+        "--ranking-margin-scale", type=float, default=1.0,
+        help="Multiplies each endpoint's noise floor to get its margin. At "
+             "1.0 a pair must differ by more than replicate scatter.",
+    )
+    parser.add_argument(
+        "--ranking-max-pairs", type=int, default=4096,
+        help="Pairs scored per batch, subsampled at random. One "
+             "comparability group of 2,295 rows would otherwise contribute "
+             "2.6M pairs and dominate the term.",
     )
     parser.add_argument("--resume", default=None)
     return parser
