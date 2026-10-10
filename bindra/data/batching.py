@@ -253,7 +253,6 @@ def dataset_cache_key(
     processed: "Path | str",
     split_directory: "Path | str",
     partition: str,
-    metadata: "EncoderMetadata",
     limit: "int | None",
 ) -> str:
     """Content digest of everything the assembled dataset depends on.
@@ -263,9 +262,12 @@ def dataset_cache_key(
     encoder contract. A rebuilt corpus or a rebuilt split changes the key and
     the cache is simply missed, rather than serving rows that no longer match.
 
-    The encoder metadata is in here because ``_unique_keys`` is derived from
-    ``metadata.cache_key(sequence)`` -- a different protein cache means
-    different keys for the same observations.
+    The encoder metadata is deliberately NOT in here. What the cache holds is
+    the corpus scan and its two joins, which take about ten minutes and do not
+    depend on the encoder at all. The only encoder-dependent part is the table
+    of per-construct cache keys, and hashing all 10,820 of them takes 0.08s --
+    so it is recomputed on every load rather than splitting the cache in two
+    and missing it every time the protein cache changes.
     """
     import hashlib
     import json as _json
@@ -286,7 +288,6 @@ def dataset_cache_key(
         "split_id": manifest.get("split_id"),
         "partition": partition,
         "limit": limit,
-        "encoder": metadata.to_dict() if hasattr(metadata, "to_dict") else str(metadata),
     }
     return hashlib.sha256(
         _json.dumps(parts, sort_keys=True, default=str).encode("utf-8")
@@ -350,7 +351,7 @@ class PairDataset:
         self._cache_key = None
         if cache_dir is not None:
             self._cache_key = dataset_cache_key(
-                self.processed, split_directory, partition, self._metadata, limit
+                self.processed, split_directory, partition, limit
             )
             if self._load_cached(Path(cache_dir) / self._cache_key):
                 return
@@ -414,6 +415,35 @@ class PairDataset:
         # pointing at it. Hashing is over the sequence and the encoder contract,
         # so it is far too expensive to redo per batch and pointless to redo per
         # observation.
+        self._build_protein_keys(constructs)
+        if cache_dir is not None and self._cache_key:
+            self._save_cached(Path(cache_dir) / self._cache_key)
+
+    # -- the disk cache --------------------------------------------------
+
+    def _build_protein_keys(self, constructs=None) -> None:
+        """Map each row to its protein cache key, via the encoder contract.
+
+        Separated from the corpus scan because it depends on the ENCODER while
+        the frame does not: hashing all 10,820 constructs takes 0.08s against
+        the ten minutes the scan costs. Keeping them apart is what lets one
+        cached frame serve a one-layer and a four-layer protein cache.
+        """
+        import pandas as pd
+
+        if constructs is None:
+            constructs = pd.read_parquet(
+                self.processed / "target_constructs.parquet",
+                columns=["sequence_ref", "sequence_sha256", "status"],
+            )
+            constructs = constructs[constructs["status"] == "OK"]
+            sequences = pd.read_parquet(
+                self.processed / "sequences_raw.parquet",
+                columns=["sequence_ref", "sequence"],
+            ).set_index("sequence_ref")
+            constructs = constructs.join(sequences, on="sequence_ref").drop_duplicates(
+                "sequence_sha256"
+            )
         unique = constructs.drop_duplicates("sequence_sha256")
         key_by_hash = {
             digest: self._metadata.cache_key(sequence)
@@ -426,10 +456,6 @@ class PairDataset:
             dtype=np.int32,
             count=len(self.frame),
         )
-        if cache_dir is not None and self._cache_key:
-            self._save_cached(Path(cache_dir) / self._cache_key)
-
-    # -- the disk cache --------------------------------------------------
 
     def _load_cached(self, directory: Path) -> bool:
         """Restore a previously assembled dataset. False if there is none.
@@ -449,10 +475,11 @@ class PairDataset:
             payload = json.loads(marker.read_text(encoding="utf-8"))
             self.frame = pd.read_parquet(directory / "frame.parquet")
             self.lengths = self.frame["sequence_length"].to_numpy().astype(int)
-            self._unique_keys = payload["unique_keys"]
-            self._key_index = np.load(directory / "key_index.npy")
-            if len(self._key_index) != len(self.frame):
-                raise ValueError("key index and frame disagree on length")
+            # Rebuilt here rather than restored, because these depend on the
+            # encoder contract and the frame does not. 0.08s against the ten
+            # minutes the frame costs, which is why the cache is keyed on the
+            # frame alone and survives a change of protein cache.
+            self._build_protein_keys()
         except Exception as exc:  # noqa: BLE001 - a bad cache is a miss, not a crash
             print(
                 f"[ warn  ] dataset cache at {directory.name} unreadable "
@@ -474,14 +501,12 @@ class PairDataset:
         try:
             directory.mkdir(parents=True, exist_ok=True)
             self.frame.to_parquet(directory / "frame.parquet", index=False)
-            np.save(directory / "key_index.npy", self._key_index)
             # Written LAST: its presence is what marks the cache complete, so
             # a run killed mid-write leaves a miss rather than a torn entry.
             (directory / "dataset.json").write_text(
                 json.dumps({
                     "partition": self.partition,
                     "rows": int(len(self.frame)),
-                    "unique_keys": list(self._unique_keys),
                 }),
                 encoding="utf-8",
             )

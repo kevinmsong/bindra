@@ -215,9 +215,21 @@ def cmd_fit(args) -> int:
             "descriptors read rather than recomputed",
             flush=True,
         )
+    # Said conditionally. Printing "one pass over the corpus" before the cache
+    # is even consulted told the reader a ten-minute scan was starting when it
+    # was about to be skipped.
+    from bindra.data.batching import dataset_cache_key
+
+    _cached = (
+        Path(args.dataset_cache)
+        / dataset_cache_key(processed, split_directory, "train", args.limit)
+        / "dataset.json"
+    ).exists() if args.dataset_cache else False
     print(
-        f"[{INFO}] building loaders for the LiGhT ligand arm "
-        "(one pass over the corpus)...",
+        f"[{INFO}] loading the cached train/val datasets..."
+        if _cached
+        else f"[{INFO}] assembling train/val datasets (one pass over the "
+             "corpus, cached afterwards)...",
         flush=True,
     )
     train = PairDataset(
