@@ -211,3 +211,139 @@ class TestProvenanceRecordsTheUpgrades:
         ):
             assert key in recorded, f"{key} is not recorded in provenance"
         assert recorded["architecture"] == "BINDRA-v2"
+
+
+class TestEndToEndForward:
+    """Actually push data through, which building the model does not.
+
+    Three separate multi-layer bugs reached a GPU run because every earlier
+    test constructed a model and checked its parameter count without ever
+    handing it a batch. A 4608-wide protein tensor is the shape the cache
+    really produces, and nothing below is satisfied by a model that merely
+    initialises.
+    """
+
+    def _ligand(self, n=2):
+        from bindra.encoders.kpgt_graph import DEFAULT_POLICY, collate_kpgt, featurize_kpgt
+        from bindra.encoders.ligand_kpgt_arm import KPGTLigandBatch
+
+        smiles = ["CCO", "c1ccccc1O", "CC(=O)Nc1ccccc1", "CCN(CC)CC"][:n]
+        graphs = [featurize_kpgt(s, DEFAULT_POLICY) for s in smiles]
+        return KPGTLigandBatch(
+            graphs=collate_kpgt(graphs),
+            fingerprints=torch.zeros(n, 512),
+            descriptors=torch.zeros(n, 200),
+        )
+
+    def _full_v2(self):
+        return BindraConfig(
+            protein_dim=1152, ligand=KPGTConfig.mini(), model_dim=256,
+            cross_attention_layers=2, feedforward_multiplier=2,
+            adapter_bottleneck=512, pool_heads=4, protein_layers=4,
+            assay_conditioning=True,
+            head=AffinityHeadConfig(hidden_dim=256, dropout=0.1),
+        )
+
+    def test_a_four_layer_batch_runs_end_to_end(self):
+        from bindra.data.assay import ASSAY_DIM
+
+        model = BindraModel(self._full_v2()).eval()
+        with torch.no_grad():
+            out = model(
+                torch.randn(2, 20, 4608),              # 4 layers x 1152, the real cache width
+                torch.ones(2, 20, dtype=torch.bool),
+                self._ligand(),
+                assay=torch.zeros(2, ASSAY_DIM),
+            )
+        assert out.pair_representation.shape == (2, 1536)
+        assert not bool(torch.isnan(out.pair_representation).any())
+
+    def test_a_single_layer_width_is_refused_by_a_four_layer_model(self):
+        """The width check must know about layers, not just protein_dim."""
+        from bindra.data.assay import ASSAY_DIM
+        from bindra.model import BindraModelError
+
+        model = BindraModel(self._full_v2()).eval()
+        with pytest.raises(BindraModelError, match="4 layers"):
+            model(
+                torch.randn(2, 20, 1152),              # what the OLD cache gives
+                torch.ones(2, 20, dtype=torch.bool),
+                self._ligand(),
+                assay=torch.zeros(2, ASSAY_DIM),
+            )
+
+    def test_a_conditioned_model_refuses_a_batch_with_no_assay_vector(self):
+        model = BindraModel(self._full_v2()).eval()
+        from bindra.model import BindraModelError
+
+        with pytest.raises(BindraModelError, match="assay"):
+            model(torch.randn(2, 20, 4608), torch.ones(2, 20, dtype=torch.bool), self._ligand())
+
+    def test_the_v1_shaped_model_still_runs_on_the_old_cache(self):
+        """The single-layer path must not have been broken by any of this."""
+        config = BindraConfig(
+            protein_dim=1152, ligand=KPGTConfig.mini(), model_dim=96,
+            cross_attention_layers=4, feedforward_multiplier=2,
+            attention_pooling=False,
+            head=AffinityHeadConfig(hidden_dim=96, dropout=0.1),
+        )
+        model = BindraModel(config).eval()
+        with torch.no_grad():
+            out = model(
+                torch.randn(2, 20, 1152),
+                torch.ones(2, 20, dtype=torch.bool),
+                self._ligand(),
+            )
+        assert out.pair_representation.shape == (2, 576)
+
+    def test_gradients_reach_every_new_v2_module(self):
+        """A module that never gets a gradient is decoration.
+
+        The assay path is checked at step **two**, not step one. FiLM's
+        projection is zero-initialised -- that is what makes conditioning an
+        exact no-op at init and therefore a clean ablation -- so the chain
+        rule runs everything behind it through a zero matrix on the first
+        backward. Measured: 0 at step 1, then nonzero once `project` has moved
+        off zero. The module docstring records the same for its own `norm`.
+        """
+        from bindra.data.assay import ASSAY_DIM
+
+        model = BindraModel(self._full_v2()).train()
+        optimizer = torch.optim.SGD(model.parameters(), lr=1e-3)
+
+        def backward_once():
+            optimizer.zero_grad()
+            out = model(
+                torch.randn(2, 20, 4608),
+                torch.ones(2, 20, dtype=torch.bool),
+                self._ligand(),
+                assay=torch.rand(2, ASSAY_DIM),
+            )
+            out.pair_representation.sum().backward()
+
+        def total_grad(module):
+            return sum(
+                float(p.grad.abs().sum()) for p in module.parameters() if p.grad is not None
+            )
+
+        # Step one: everything not gated by FiLM's zero init already moves.
+        backward_once()
+        for name, module in (
+            ("LayerMix", model.adapters.layer_mix),
+            ("protein AttentionPool", model.protein_pool),
+            ("ligand AttentionPool", model.ligand_pool),
+        ):
+            assert module is not None, f"{name} was not built"
+            assert total_grad(module) > 0, f"{name} got no gradient on step 1"
+        assert total_grad(model.adapters.assay) == 0.0, (
+            "the assay encoder got a gradient through a zero-initialised FiLM "
+            "projection; the conditioning is no longer an exact no-op at init"
+        )
+
+        # Step two: the assay path comes alive once FiLM has moved off zero.
+        optimizer.step()
+        backward_once()
+        assert total_grad(model.adapters.assay) > 0, (
+            "the assay encoder still gets no gradient after a step; the assay "
+            "vector is not reaching the loss and the conditioning is inert"
+        )

@@ -407,16 +407,24 @@ class BindraModel(nn.Module):
                 f"ligand_batch {type(ligand_batch).__name__} has no num_graphs; "
                 "build it with the installed arm's collate_smiles"
             )
+        # What arrives is the CACHE's width, which is one layer's width times
+        # however many layers it holds. LayerMix collapses it to protein_dim
+        # inside the adapters, so comparing the input against protein_dim
+        # rejects every valid multi-layer batch.
+        expected = self.config.protein_dim * self.config.protein_layers
         if protein_features.ndim != 3:
             raise BindraModelError(
-                f"protein_features must be [B, L, {self.config.protein_dim}], got "
+                f"protein_features must be [B, L, {expected}], got "
                 f"{tuple(protein_features.shape)}"
             )
-        if protein_features.shape[-1] != self.config.protein_dim:
+        if protein_features.shape[-1] != expected:
+            layers = self.config.protein_layers
             raise BindraModelError(
-                f"protein_features width {protein_features.shape[-1]} != configured "
-                f"protein_dim {self.config.protein_dim}; the cache was written by a "
-                "different encoder than this model was built for"
+                f"protein_features width {protein_features.shape[-1]} != the "
+                f"expected {expected}"
+                + (f" ({layers} layers x {self.config.protein_dim})" if layers > 1 else "")
+                + "; the cache was written by a different encoder than this "
+                "model was built for"
             )
         if protein_mask.dtype is not torch.bool:
             raise BindraModelError(
