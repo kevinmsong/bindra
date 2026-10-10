@@ -262,6 +262,33 @@ def describe_device(device) -> str:
         return f"cuda:{index}"
 
 
+def enable_fast_matmul() -> str:
+    """Let fp32 matmuls use tensor cores, and report what was set.
+
+    The forward pass runs under bf16 autocast, but the parts autocast keeps in
+    fp32 -- the normalisations, the attention softmax, the loss -- still go
+    through fp32 kernels. Leaving the default "highest" precision there means
+    those run without tensor cores for an accuracy nobody is relying on: the
+    inputs are bf16 cached features and the labels carry a replicate-noise
+    floor of 0.641 to 0.945 log units. tf32's ~1e-3 relative error is three
+    orders of magnitude below the measurement it is fitting.
+
+    Returns a description for the run log, because a precision change that is
+    not recorded is one nobody can account for later.
+    """
+    if not torch.cuda.is_available():
+        return "cpu, unchanged"
+    torch.set_float32_matmul_precision("high")
+    if hasattr(torch.backends, "cuda") and hasattr(torch.backends.cuda, "matmul"):
+        torch.backends.cuda.matmul.allow_tf32 = True
+    if hasattr(torch.backends, "cudnn"):
+        torch.backends.cudnn.allow_tf32 = True
+        # NOT cudnn.benchmark: it caches a plan per input shape, and
+        # length-bucketed batches present many shapes, so the autotuning cost
+        # is paid repeatedly instead of amortised.
+    return "fp32 matmul precision high (tf32 on)"
+
+
 def select_device(requirement: DeviceRequirement | None = None) -> torch.device:
     """``select_gpu`` as a ``torch.device``, honouring ``allow_cpu``."""
     requirement = requirement or DeviceRequirement()
@@ -275,6 +302,7 @@ def select_device(requirement: DeviceRequirement | None = None) -> torch.device:
 
 __all__ = [
     "DEFAULT_MIN_CAPABILITY",
+    "enable_fast_matmul",
     "DEFAULT_MIN_MEMORY_GIB",
     "DeviceRequirement",
     "DeviceSelectionError",

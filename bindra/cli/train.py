@@ -162,6 +162,9 @@ def cmd_fit(args) -> int:
             print(f"[{FAIL}] {exc}")
             return 1
     print(f"[{OK}] device {describe_device(device)}", flush=True)
+    from bindra.runtime.device import enable_fast_matmul
+
+    print(f"[{OK}] {enable_fast_matmul()}", flush=True)
 
     cached_layers = _cache_layers(args.protein_cache)
     n_cached = len(cached_layers) if cached_layers else 1
