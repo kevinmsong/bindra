@@ -187,10 +187,16 @@ class LayerMix(nn.Module):
             return self.norms[0](features)
         parts = torch.split(features, self.layer_dim, dim=-1)
         weights = self.weights()
-        stacked = torch.stack(
-            [norm(part) for norm, part in zip(self.norms, parts)], dim=0
-        )
-        return (weights.view(-1, *([1] * (stacked.dim() - 1))) * stacked).sum(0)
+        # Accumulated in place of a stack. `torch.stack` would materialise all
+        # n_layers normalised copies at once -- at a 65,536-residue budget and
+        # four layers that is an extra ~900 MiB of activation on top of the
+        # 1.2 GiB input, purely to be summed away on the next line. Summing as
+        # we go holds one layer at a time.
+        mixed = None
+        for weight, norm, part in zip(weights, self.norms, parts):
+            term = weight * norm(part)
+            mixed = term if mixed is None else mixed + term
+        return mixed
 
 
 class AttentionPool(nn.Module):

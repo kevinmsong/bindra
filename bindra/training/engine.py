@@ -129,6 +129,12 @@ class TrainingConfig:
     #: Fraction of total steps spent warming the learning rate from zero.
     warmup_fraction: float = 0.05
     grad_clip: float = 1.0
+    #: How many batches may run out of memory BACK TO BACK before the run is
+    #: refused. One skip is cheap insurance; a run of them means the batch
+    #: size and the card are mismatched, and finishing anyway yields a model
+    #: trained only on the batches that fit -- the shortest proteins. That
+    #: bias does not show up in the loss.
+    max_consecutive_oom: int = 5
     #: Micro-batches accumulated before each optimizer step. The *physical*
     #: batch is capped by VRAM -- the residue budget of 65,536 peaks at 6.66 GiB
     #: and doubling it exhausts the card, because fusion activations scale with
@@ -635,6 +641,7 @@ class Trainer:
         waiting = 0.0
         micro = 0
         skipped = 0
+        consecutive = 0
         skipped_pairs = 0
         accumulate = self.config.accumulate_steps
         last_tick = time.perf_counter()
@@ -691,19 +698,45 @@ class Trainer:
                 # with it, so no half-batch contributes a skewed step.
                 skipped += 1
                 skipped_pairs += batch.size
+                residues = batch.padded_residues
                 del batch
                 self.optimizer.zero_grad(set_to_none=True)
                 micro = 0
                 torch.cuda.empty_cache()
+                consecutive += 1
                 print(
                     f"  [oom] skipped batch {index} ({skipped} so far, "
                     f"{skipped_pairs:,} pairs) after {type(exc).__name__}; "
                     "emptied the cache and continued",
                     flush=True,
                 )
+                # A single skip is a fair trade: one batch is a tiny slice of
+                # an epoch and dying to save it would be worse. A RUN of them
+                # is a different thing entirely. It means the batch size and
+                # the card are simply mismatched, and continuing does not
+                # produce a slightly smaller epoch -- it produces a model
+                # trained only on the batches that happened to fit, which are
+                # the ones with the SHORTEST proteins. That bias is invisible
+                # in the loss and fatal to the result, so it is refused.
+                if consecutive >= self.config.max_consecutive_oom:
+                    suggested = max(4096, int(residues * 0.6) // 1024 * 1024)
+                    raise TrainingError(
+                        f"{consecutive} batches in a row ran out of memory. "
+                        "This is a configuration mismatch, not bad luck, and "
+                        "continuing would train on only the batches that fit "
+                        "-- the shortest proteins -- which biases the model "
+                        "invisibly.\n"
+                        f"  last batch: {residues:,} padded residues\n"
+                        f"  try: --residue-budget {suggested:,} "
+                        f"(currently {loader.policy.residue_budget:,})\n"
+                        "  a wider protein cache needs a proportionally smaller "
+                        "budget: four cached layers are four times the bytes "
+                        "per residue."
+                    )
                 last_tick = time.perf_counter()
                 continue
             micro += 1
+            consecutive = 0
 
             grad_norm = None
             stepped = micro == accumulate or index == n_batches - 1
