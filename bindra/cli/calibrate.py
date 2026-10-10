@@ -135,11 +135,12 @@ def _cal_predictions(paths, args, device):
         ESMC_600M_WEIGHTS_SHA256,
         EXPECTED_ESMC_600M_DIM,
         ESMCProteinEncoder,
+        metadata_for_cache,
     )
 
-    metadata = ESMCProteinEncoder(n_trainable_layers=0).metadata(
-        EXPECTED_ESMC_600M_DIM, weights_checksum=ESMC_600M_WEIGHTS_SHA256
-    )
+    # Shaped to whatever layer set the cache holds, so a multi-layer cache
+    # opens here without the caller restating how it was built.
+    metadata = metadata_for_cache(args.protein_cache)
     cache = ProteinFeatureCache(args.protein_cache, metadata=metadata)
     builder = LigandBatchBuilder.for_config(KPGTConfig.mini())
     if args.knowledge_cache:

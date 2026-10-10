@@ -168,6 +168,44 @@ def strip_special_tokens(
     return kept
 
 
+
+def cache_declared_layers(cache_directory) -> "tuple[int, ...] | None":
+    """Which ESM-C layers a cache on disk says it holds, or None for one.
+
+    The cache is the authority on its own contents. Restating the layer list on
+    every command line invites the one mistake that cannot be recovered from
+    later: a `StaleCacheError` with two 400-character JSON blobs to diff by eye,
+    several seconds into a run.
+    """
+    import json
+    from pathlib import Path as _Path
+
+    index = _Path(cache_directory) / "index.json"
+    if not index.exists():
+        return None
+    try:
+        payload = json.loads(index.read_text(encoding="utf-8"))
+        layers = (payload.get("encoder_metadata") or {}).get("extra", {}).get("layers")
+        return tuple(layers) if layers else None
+    except Exception:  # noqa: BLE001 - an unreadable index must not mask the real error
+        return None
+
+
+def metadata_for_cache(cache_directory):
+    """ESM-C metadata shaped to whatever layer set the cache was written with.
+
+    Every reader of the protein cache should build its metadata through this,
+    so a multi-layer cache opens without the caller having to know how it was
+    produced.
+    """
+    layers = cache_declared_layers(cache_directory)
+    encoder = ESMCProteinEncoder(n_trainable_layers=0, layers=layers)
+    return encoder.metadata(
+        EXPECTED_ESMC_600M_DIM * encoder.n_layers,
+        weights_checksum=ESMC_600M_WEIGHTS_SHA256,
+    )
+
+
 class ESMCProteinEncoder:
     """Frozen ESM-C-600M residue embedder.
 
@@ -187,7 +225,33 @@ class ESMCProteinEncoder:
         model: Any | None = None,
         tokenizer: Any | None = None,
         n_trainable_layers: int = 0,
+        layers: tuple[int, ...] | None = None,
     ) -> None:
+        #: Which transformer layers to emit, as negative offsets from the top
+        #: (-1 is the final layer). ``None`` keeps the historical behaviour of
+        #: the final layer alone.
+        #:
+        #: The final layer is the one most specialised for ESM-C's own
+        #: masked-token objective, and it is not generally the layer carrying
+        #: the most structural signal. Emitting several lets the model learn a
+        #: mix (see :class:`~bindra.fusion.adapters.LayerMix`) at the cost of one
+        #: weight per layer -- and of a proportionally larger cache.
+        #:
+        #: This participates in the cache key through ``extra``, so a cache
+        #: written with one setting is refused by a model expecting another
+        #: rather than silently mis-sliced.
+        self.layers = tuple(layers) if layers else None
+        if self.layers is not None:
+            if any(layer >= 0 for layer in self.layers):
+                raise ValueError(
+                    f"layers must be negative offsets from the top, got {self.layers}"
+                )
+            if len(set(self.layers)) != len(self.layers):
+                raise ValueError(f"layers must be distinct, got {self.layers}")
+            # Ascending so the concatenation order is deterministic and the
+            # final layer is always the last block -- which is what makes
+            # LayerMix's last-layer initialisation mean what it says.
+            self.layers = tuple(sorted(self.layers))
         self.checkpoint = checkpoint
         self.revision = revision
         self.device = torch.device(device)
@@ -387,6 +451,11 @@ class ESMCProteinEncoder:
         self._weights_checksum_cache = digest.hexdigest()
         return self._weights_checksum_cache
 
+    @property
+    def n_layers(self) -> int:
+        """How many layers one residue's cached vector concatenates."""
+        return 1 if self.layers is None else len(self.layers)
+
     def metadata(self, output_dim: int, *, weights_checksum: str | None = None) -> EncoderMetadata:
         """Encoder identity, as it appears in every cache key.
 
@@ -411,12 +480,26 @@ class ESMCProteinEncoder:
             revision=self.revision,
             weights_checksum=weights_checksum,
             preprocessing_policy=(
-                "EsmcModel.last_hidden_state (post final LayerNorm); "
-                "special tokens stripped via tokenizer mask; "
-                f"window={self.window_size} overlap={self.overlap} merge=mean"
+                (
+                    "EsmcModel.last_hidden_state (post final LayerNorm); "
+                    if self.layers is None
+                    else f"EsmcModel.hidden_states{list(self.layers)} concatenated; "
+                )
+                + "special tokens stripped via tokenizer mask; "
+                + f"window={self.window_size} overlap={self.overlap} merge=mean"
             ),
             extra={
                 "context_limit": self.context_limit,
+                # Keys the cache: a multi-layer cache must never be read by a
+                # model built for the single-layer one, or every residue vector
+                # is silently mis-sliced.
+                #
+                # Present ONLY when several layers are stored. Adding it
+                # unconditionally -- even as null -- changes the key of the
+                # single-layer contract and invalidates the existing 14.0 GiB
+                # cache, which is 10,820 targets of GPU time for no change in
+                # what is stored.
+                **({"layers": list(self.layers)} if self.layers else {}),
                 # Numerics depend on these, so they key the cache.
                 "kernel_backends": list(detect_kernel_backends()),
                 "api": "native-EsmcModel",
@@ -449,7 +532,52 @@ class ESMCProteinEncoder:
         tokens = torch.tensor([token_ids], dtype=torch.long, device=self.device)
 
         with torch.inference_mode():
-            output = self.model(tokens)
+            # The single-layer path calls the model exactly as it always did.
+            # Passing output_hidden_states=False unconditionally would still
+            # change the signature, and anything that does not accept the
+            # keyword -- a stub, a wrapped model, an older build -- raises
+            # TypeError on a path that has nothing to do with layer mixing.
+            output = (
+                self.model(tokens, output_hidden_states=True)
+                if self.layers is not None
+                else self.model(tokens)
+            )
+
+        if self.layers is not None:
+            states = getattr(output, "hidden_states", None)
+            # `states` is a STACKED TENSOR here, [n_layers + 1, B, L, D], not the
+            # tuple the HuggingFace convention would suggest -- 37 entries for
+            # ESM-C 600M's 36 blocks plus the embedding layer at index 0. A bare
+            # `if not states` raises "Boolean value of Tensor with more than one
+            # value is ambiguous", which is how this failed the first time.
+            if states is None or len(states) == 0:
+                raise ProteinEncoderError(
+                    f"{type(output).__name__} returned no 'hidden_states' although "
+                    "they were requested; this adapter cannot emit a layer mix "
+                    "without them."
+                )
+            # Measured: states[-1] is bit-identical to last_hidden_state, so the
+            # final block of a multi-layer cache matches the single-layer one
+            # exactly. That is what makes LayerMix's last-layer initialisation
+            # reproduce the single-layer model rather than merely approximate it.
+            picked = []
+            for layer in self.layers:
+                if abs(layer) > len(states):
+                    raise ProteinEncoderError(
+                        f"layer {layer} is out of range for a stack of "
+                        f"{len(states)} hidden states"
+                    )
+                picked.append(
+                    strip_special_tokens(
+                        states[layer][0].float(),
+                        token_ids,
+                        special_mask,
+                        expected_residues=len(segment),
+                    )
+                )
+            # Concatenated along the feature axis, final layer last. LayerMix
+            # splits on exactly this layout.
+            return torch.cat(picked, dim=-1)
 
         # Take the post-LayerNorm final state, by name and nothing else.
         #
@@ -519,9 +647,15 @@ class ESMCProteinEncoder:
         residue_features = accumulator / counts
 
         output_dim = int(residue_features.shape[1])
-        if "600M" in self.checkpoint.upper() and output_dim != EXPECTED_ESMC_600M_DIM:
+        # One layer's width times however many layers were requested. The check
+        # stays exact rather than becoming a divisibility test: a wrong layer
+        # count must fail here, not silently produce a cache the model will
+        # mis-slice.
+        expected_dim = EXPECTED_ESMC_600M_DIM * self.n_layers
+        if "600M" in self.checkpoint.upper() and output_dim != expected_dim:
             raise ProteinEncoderError(
-                f"expected {EXPECTED_ESMC_600M_DIM}-dim features from esmc_600m, got {output_dim}"
+                f"expected {expected_dim}-dim features from esmc_600m "
+                f"({self.n_layers} layer(s) x {EXPECTED_ESMC_600M_DIM}), got {output_dim}"
             )
 
         if self.precision == "bfloat16":

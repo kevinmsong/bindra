@@ -29,17 +29,18 @@ INFO = " info  "
 FAIL = " FAIL  "
 
 
-def _protein_metadata(processed: Path):
-    """Metadata of the frozen ESM-C contract that populated the cache."""
-    from bindra.encoders.protein_esmc import (
-        ESMC_600M_WEIGHTS_SHA256,
-        EXPECTED_ESMC_600M_DIM,
-        ESMCProteinEncoder,
-    )
+def _cache_layers(cache_directory):
+    """Delegates to the encoder that owns the cache contract."""
+    from bindra.encoders.protein_esmc import cache_declared_layers
 
-    return ESMCProteinEncoder(n_trainable_layers=0).metadata(
-        EXPECTED_ESMC_600M_DIM, weights_checksum=ESMC_600M_WEIGHTS_SHA256
-    )
+    return cache_declared_layers(cache_directory)
+
+
+def _protein_metadata(processed: Path, cache_directory=None):
+    """ESM-C metadata shaped to the layer set the cache actually holds."""
+    from bindra.encoders.protein_esmc import metadata_for_cache
+
+    return metadata_for_cache(cache_directory or "data/cache/proteins")
 
 
 def _provenance(processed: Path, split_directory: Path, protein_metadata, ligand_metadata):
@@ -162,11 +163,28 @@ def cmd_fit(args) -> int:
             return 1
     print(f"[{OK}] device {describe_device(device)}", flush=True)
 
-    protein_metadata = _protein_metadata(processed)
+    cached_layers = _cache_layers(args.protein_cache)
+    n_cached = len(cached_layers) if cached_layers else 1
+    # --protein-layers is a cross-check, not the source of truth. Left at its
+    # default it simply follows the cache; set to something the cache does not
+    # hold it is an error here rather than a StaleCacheError two frames down.
+    if args.protein_layers not in (1, n_cached):
+        print(
+            f"[{FAIL}] --protein-layers {args.protein_layers} but the cache at "
+            f"{args.protein_cache} holds {n_cached} layer(s)"
+            + (f" {list(cached_layers)}" if cached_layers else "")
+            + ". Point at the matching cache, or drop the flag and let the "
+            "cache decide.",
+            flush=True,
+        )
+        return 2
+    args.protein_layers = n_cached
+    protein_metadata = _protein_metadata(processed, args.protein_cache)
     cache = ProteinFeatureCache(args.protein_cache, metadata=protein_metadata)
     print(
         f"[{OK}] protein cache: {len(cache):,} constructs, "
-        f"{cache.total_bytes / 2**30:.3f} GiB, dim {protein_metadata.output_dim}",
+        f"{cache.total_bytes / 2**30:.3f} GiB, dim {protein_metadata.output_dim}"
+        + (f" ({n_cached} layers {list(cached_layers)})" if cached_layers else ""),
         flush=True,
     )
 
@@ -201,7 +219,7 @@ def cmd_fit(args) -> int:
     )
     train = PairDataset(
         processed, split_directory, "train", protein_cache=cache, limit=args.limit,
-        ligand_builder=ligand_builder,
+        ligand_builder=ligand_builder, with_assay=args.assay_conditioning,
     )
     validation = PairDataset(
         processed,
@@ -210,6 +228,7 @@ def cmd_fit(args) -> int:
         protein_cache=cache,
         limit=None if args.limit is None else max(1, args.limit // 8),
         ligand_builder=ligand_builder,
+        with_assay=args.assay_conditioning,
     )
     policy = BatchingPolicy(
         residue_budget=args.residue_budget, max_pairs=args.max_pairs, seed=args.seed
@@ -227,14 +246,30 @@ def cmd_fit(args) -> int:
     )
     print(f"[{INFO}] batch shape: {train_loader.describe()}", flush=True)
 
+    # The cache stores `protein_layers` layers concatenated, so one layer is
+    # that width divided by the count. Dividing here rather than in the model
+    # keeps `protein_dim` meaning the same thing everywhere.
+    cached_width = protein_metadata.output_dim
+    if cached_width % args.protein_layers:
+        print(
+            f"[{FAIL}] cache width {cached_width} is not divisible by "
+            f"--protein-layers {args.protein_layers}",
+            flush=True,
+        )
+        return 2
     config = BindraConfig(
-        protein_dim=protein_metadata.output_dim,
+        protein_dim=cached_width // args.protein_layers,
         ligand=ligand,
         model_dim=args.model_dim,
         cross_attention_layers=args.fusion_layers,
         cross_attention_heads=8,
         dropout=args.dropout,
         feedforward_multiplier=args.feedforward_multiplier,
+        attention_pooling=not args.no_attention_pooling,
+        pool_heads=args.pool_heads,
+        protein_layers=args.protein_layers,
+        assay_conditioning=args.assay_conditioning,
+        adapter_bottleneck=args.adapter_bottleneck,
         head=AffinityHeadConfig(hidden_dim=args.model_dim, dropout=args.dropout),
     )
     model = BindraModel(config)
@@ -392,6 +427,35 @@ def build_parser():
     parser.add_argument("--ema", type=float, default=0.999)
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--model-dim", type=int, default=96)
+    parser.add_argument(
+        "--adapter-bottleneck", type=int, default=None,
+        help="Hidden width inside each feature adapter. Default None is a "
+             "single linear map, which at --model-dim 96 compressed ESM-C's "
+             "1152 by 12x in one step. A value here makes it a two-layer MLP.",
+    )
+    parser.add_argument(
+        "--pool-heads", type=int, default=4,
+        help="Attention-pooling heads over residues and ligand tokens.",
+    )
+    parser.add_argument(
+        "--no-attention-pooling", action="store_true",
+        help="Pool with a plain masked mean instead of learned relevance. The "
+             "two are bit-identical at initialisation, so this is a clean "
+             "ablation rather than a different model.",
+    )
+    parser.add_argument(
+        "--protein-layers", type=int, default=1,
+        help="How many ESM-C layers the protein cache holds. Must match the "
+             "cache: `bindra cache proteins --layers` writes it, and the cache "
+             "key refuses a mismatch rather than mis-slicing.",
+    )
+    parser.add_argument(
+        "--assay-conditioning", action="store_true",
+        help="Condition on each measurement's recorded assay conditions (pH/T "
+             "bucket, IC50 tier, source class, metadata confidence). IC50 is "
+             "72%% of the corpus and is not a constant of the pair. Identity "
+             "columns are excluded; see bindra.data.assay.EXCLUDED_AS_LEAKAGE.",
+    )
     parser.add_argument(
         "--knowledge-cache", default="data/cache/knowledge",
         help="Precomputed KPGT fingerprints/descriptors. They are 81%% of ligand "

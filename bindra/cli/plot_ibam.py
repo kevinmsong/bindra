@@ -185,6 +185,7 @@ def cmd_plot_ibam(args) -> int:
         ESMC_600M_WEIGHTS_SHA256,
         EXPECTED_ESMC_600M_DIM,
         ESMCProteinEncoder,
+        metadata_for_cache,
     )
     from bindra.features.cache import ProteinFeatureCache
     from bindra.ibam.export import AggregationPolicy
@@ -207,9 +208,9 @@ def cmd_plot_ibam(args) -> int:
     )
     print(f"[{INFO}] aggregation: {policy.describe()} [{policy.policy_hash}]")
 
-    metadata = ESMCProteinEncoder(n_trainable_layers=0).metadata(
-        EXPECTED_ESMC_600M_DIM, weights_checksum=ESMC_600M_WEIGHTS_SHA256
-    )
+    # Shaped to whatever layer set the cache holds, so a multi-layer cache
+    # opens here without the caller restating how it was built.
+    metadata = metadata_for_cache(args.protein_cache)
     cache = ProteinFeatureCache(args.protein_cache, metadata=metadata)
 
     style = _replace(PUBLICATION, png_dpi=args.dpi, write_png=not args.no_png)

@@ -42,6 +42,7 @@ from typing import Iterator, Sequence
 import numpy as np
 import torch
 
+from bindra.data.assay import ASSAY_COLUMNS, UNKNOWN, encode_assay
 from bindra.encoders.ligand_featurizers import LigandBatchBuilder
 from bindra.features.cache import ProteinFeatureCache
 from bindra.features.types import EncoderMetadata
@@ -59,6 +60,14 @@ OBSERVATION_COLUMNS = (
     "upper_bound",
     "ic50_tier",
     "primary_regression_eligible",
+    # Read for the assay-condition conditioning. Descriptive only: see
+    # bindra.data.assay.EXCLUDED_AS_LEAKAGE for what is deliberately absent.
+    "assay_condition_bucket",
+    "metadata_confidence",
+    "curation_source_class",
+    "comparability_scope",
+    "has_ph",
+    "has_temperature",
     # Read for the within-assay ranking term. BindingDB has no assay
     # identifier, so `comparability_group_id` is the curation layer's proxy and
     # the only thing that distinguishes a within-assay comparison from a
@@ -205,6 +214,10 @@ class PairBatch:
     targets: AffinityTargets
     observation_ids: tuple[str, ...]
     smiles: tuple[str, ...]
+    #: ``[B, ASSAY_DIM]`` recorded conditions, or None when the run does not
+    #: condition on them. None rather than zeros: a zero vector is a valid
+    #: encoding and would read as a real set of conditions.
+    assay: "torch.Tensor | None" = None
 
     @property
     def size(self) -> int:
@@ -231,6 +244,7 @@ class PairBatch:
             targets=self.targets.to(device),
             observation_ids=self.observation_ids,
             smiles=self.smiles,
+            assay=None if self.assay is None else self.assay.to(device, dtype=dtype),
         )
 
 
@@ -252,15 +266,24 @@ class PairDataset:
         limit: int | None = None,
         length_multiple: int = 128,
         ligand_builder: LigandBatchBuilder | None = None,
+        with_assay: bool = False,
     ) -> None:
         import pandas as pd
+
+        #: Whether each batch carries its recorded assay conditions. Off by
+        #: default so an existing checkpoint's loader is unchanged. Named
+        #: differently from ``encode_assay`` on purpose: the flag and the
+        #: function it gates would otherwise shadow each other.
+        self.with_assay = with_assay
 
         #: Must match the policy the loader uses, or the budget check and the
         #: actual padding disagree.
         self.length_multiple = length_multiple
-        #: Which arm's featurizer the pool maps. Defaults to GAT, which is what
-        #: the trained runs used; passing the model's own ligand config through
-        #: ``LigandBatchBuilder.for_config`` is how a KPGT run stays consistent.
+        #: Which arm's featurizer the pool maps. The default is the only arm
+        #: that still exists; passing the model's own ligand config through
+        #: ``LigandBatchBuilder.for_config`` is what keeps a run consistent, and
+        #: is also where the knowledge cache is attached -- without it the 200
+        #: descriptors are recomputed per molecule, which is 81% of the work.
         self.ligand_builder = ligand_builder or LigandBatchBuilder()
 
         from bindra.data.splits import read_split
@@ -352,6 +375,8 @@ class PairDataset:
         *,
         protein_cache: ProteinFeatureCache,
         length_multiple: int = 128,
+        ligand_builder: LigandBatchBuilder | None = None,
+        with_assay: bool = False,
     ) -> "PairDataset":
         """Build from a benchmark panel's **query** table -- no labels involved.
 
@@ -371,6 +396,11 @@ class PairDataset:
         instance.protein_cache = protein_cache
         instance._metadata = protein_cache.metadata
         instance.length_multiple = length_multiple
+        # Set here rather than left to __init__, which this path bypasses via
+        # __new__. Without it `build_batch` raises AttributeError on its first
+        # batch -- latent until now only because no panel had ever been scored.
+        instance.ligand_builder = ligand_builder or LigandBatchBuilder()
+        instance.with_assay = with_assay
 
         ligands = pd.concat(
             [
@@ -417,6 +447,13 @@ class PairDataset:
             ic50_tier="na",
             primary_regression_eligible=True,
         )
+        # A panel query records no assay conditions. Every assay column the
+        # encoder needs is filled with a value outside its vocabulary, which
+        # encodes as the explicit UNKNOWN category -- not as a plausible
+        # condition the measurement never had.
+        for column in ASSAY_COLUMNS:
+            if column not in frame.columns:
+                frame = frame.assign(**{column: UNKNOWN})
         if "observation_id" not in frame.columns:
             frame = frame.assign(
                 observation_id=[f"q{i}" for i in range(len(frame))]
@@ -509,6 +546,9 @@ class PairDataset:
             targets=AffinityTargets.from_frame(rows),
             observation_ids=tuple(rows["observation_id"]),
             smiles=tuple(rows["standardized_smiles"]),
+            assay=(
+                torch.from_numpy(encode_assay(rows)) if self.with_assay else None
+            ),
         )
 
 

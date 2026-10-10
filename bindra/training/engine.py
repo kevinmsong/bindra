@@ -667,7 +667,10 @@ class Trainer:
                     enabled=self.config.use_amp and self.device.type == "cuda",
                 ):
                     output = self.model(
-                        batch.protein_features, batch.protein_mask, batch.ligands
+                        batch.protein_features,
+                        batch.protein_mask,
+                        batch.ligands,
+                        assay=batch.assay,
                     )
                     loss = affinity_loss(
                         output.prediction, batch.targets, config=self.config.loss
@@ -855,7 +858,10 @@ class Trainer:
                     enabled=self.config.use_amp and self.device.type == "cuda",
                 ):
                     output = self.model(
-                        batch.protein_features, batch.protein_mask, batch.ligands
+                        batch.protein_features,
+                        batch.protein_mask,
+                        batch.ligands,
+                        assay=batch.assay,
                     )
                     loss = affinity_loss(
                         output.prediction, batch.targets, config=self.config.loss

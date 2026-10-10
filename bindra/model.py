@@ -1,4 +1,4 @@
-"""BINDRA-v1: cached protein features and SMILES in, affinity out.
+"""BINDRA-v2: cached protein features and SMILES in, affinity out.
 
 This is the seam the specification's end-to-end requirement runs through --
 "from target sequence and SMILES through affinity prediction plus iBAM" -- and the
@@ -54,6 +54,7 @@ from bindra.encoders.ligand_kpgt import KPGTConfig
 from bindra.features.types import EncoderMetadata
 from bindra.fusion.adapters import (
     AdapterConfig,
+    AttentionPool,
     KnowledgeFiLM,
     SharedAdapters,
     masked_mean,
@@ -68,7 +69,7 @@ from bindra.heads.affinity import AffinityHeadConfig, AffinityHeads, AffinityPre
 #: Name of this architecture, recorded in every provenance block so a results
 #: table says which model produced it. Bump it when the shape changes in a way
 #: that makes two runs incomparable.
-ARCHITECTURE_NAME = "BINDRA-v1"
+ARCHITECTURE_NAME = "BINDRA-v2"
 
 
 class BindraModelError(ValueError):
@@ -123,6 +124,27 @@ class BindraConfig:
     #: initialisation, so turning it off is a clean ablation rather than a
     #: different model.
     film_conditioning: bool = True
+    #: Pool residues and ligand tokens by learned relevance instead of a plain
+    #: mean. A binding site is ~20-30 residues of a median 454, so averaging
+    #: dilutes whatever fusion found by more than an order of magnitude. Exactly
+    #: equal to the mean at initialisation, so switching it on is an ablation.
+    #: See :class:`~bindra.fusion.adapters.AttentionPool`.
+    attention_pooling: bool = True
+    #: Independent pooling heads. A pocket is not one thing; separate heads can
+    #: settle on different parts of it without competing for one softmax.
+    pool_heads: int = 4
+    #: How many ESM-C layers the protein cache holds. ``1`` is the historical
+    #: final-layer-only cache. Above 1 the model learns a scalar mix over them;
+    #: ``protein_dim`` stays the width of one layer.
+    protein_layers: int = 1
+    #: Condition on the measurement's recorded assay conditions. IC50 is 72% of
+    #: the corpus and is not a constant of the pair. See
+    #: :mod:`bindra.data.assay` for what is encoded and what is excluded as
+    #: leakage.
+    assay_conditioning: bool = False
+    #: Hidden width inside the feature adapters. ``None`` is a single linear
+    #: map, which at model_dim 96 compressed ESM-C's 1152 by 12x in one step.
+    adapter_bottleneck: int | None = None
     head: AffinityHeadConfig = field(default_factory=AffinityHeadConfig)
 
     def __post_init__(self) -> None:
@@ -139,6 +161,8 @@ class BindraConfig:
             components = getattr(self.ligand, "graph_components", None)
             if components is None:
                 components = (self.ligand.graph_dim,)  # type: ignore[attr-defined]
+        from bindra.data.assay import ASSAY_DIM
+
         return AdapterConfig(
             protein_dim=self.protein_dim,
             ligand_dim=self.ligand.token_dim,  # type: ignore[attr-defined]
@@ -146,6 +170,9 @@ class BindraConfig:
             model_dim=self.model_dim,
             dropout=self.dropout,
             graph_components=components,
+            bottleneck_dim=self.adapter_bottleneck,
+            protein_layers=self.protein_layers,
+            assay_dim=ASSAY_DIM if self.assay_conditioning else 0,
         )
 
     def cross_attention_config(self) -> CrossAttentionConfig:
@@ -177,6 +204,11 @@ class BindraConfig:
             "feedforward_multiplier": self.feedforward_multiplier,
             "split_graph_readout": self.split_graph_readout,
             "film_conditioning": self.film_conditioning,
+            "attention_pooling": self.attention_pooling,
+            "pool_heads": self.pool_heads,
+            "protein_layers": self.protein_layers,
+            "assay_conditioning": self.assay_conditioning,
+            "adapter_bottleneck": self.adapter_bottleneck,
             "dropout": self.dropout,
             "ligand": self.ligand.to_dict(),  # type: ignore[attr-defined]
             "ligand_arm": type(self.ligand).__name__,
@@ -239,10 +271,27 @@ class BindraModel(nn.Module):
         # Conditioning reads the fingerprint and descriptor blocks, so it needs
         # a split readout to have separated them in the first place.
         self.film = (
-            KnowledgeFiLM(config.adapter_config())
+            KnowledgeFiLM(
+                config.adapter_config(),
+                assay_conditioning=config.assay_conditioning,
+            )
             if config.film_conditioning and config.adapter_config().graph_blocks >= 2
             else None
         )
+        # Same reasoning as FiLM above, and the same identity property: an
+        # AttentionPool is exactly masked_mean at initialisation, so building
+        # these last keeps `attention_pooling=False` bit-identical to True
+        # until the scorers learn something.
+        if config.attention_pooling:
+            self.protein_pool: AttentionPool | None = AttentionPool(
+                config.model_dim, num_heads=config.pool_heads, dropout=config.dropout
+            )
+            self.ligand_pool: AttentionPool | None = AttentionPool(
+                config.model_dim, num_heads=config.pool_heads, dropout=config.dropout
+            )
+        else:
+            self.protein_pool = None
+            self.ligand_pool = None
         if self.ligand_encoder.token_dim != config.ligand.token_dim:  # type: ignore[attr-defined]
             raise BindraModelError(
                 f"arm reports token_dim {self.ligand_encoder.token_dim} but its "
@@ -276,6 +325,7 @@ class BindraModel(nn.Module):
         protein_mask: torch.Tensor,  # [B, L] bool, True = real residue
         ligand_batch: BatchedGraphs,
         *,
+        assay: torch.Tensor | None = None,
         return_ligand_attention: bool = False,
         need_attention: bool = False,
     ) -> BindraOutput:
@@ -292,13 +342,25 @@ class BindraModel(nn.Module):
         )
         ligand_tokens, ligand_mask = encoded.tokens, encoded.token_mask
 
+        if self.config.assay_conditioning and assay is None:
+            raise BindraModelError(
+                "this model conditions on assay conditions but the batch carried "
+                "none. Build the loader with with_assay=True; conditioning on "
+                "zeros would make every measurement look like one experiment."
+            )
         adapted = self.adapters(
-            protein_features, ligand_tokens, encoded.graph_states
+            protein_features,
+            ligand_tokens,
+            encoded.graph_states,
+            assay_features=assay,
         )
         conditioned_protein, conditioned_ligand = adapted["protein"], adapted["ligand"]
         if self.film is not None:
             conditioned_protein, conditioned_ligand = self.film(
-                adapted["protein"], adapted["ligand"], adapted["ligand_graph"]
+                adapted["protein"],
+                adapted["ligand"],
+                adapted["ligand_graph"],
+                assay=adapted.get("assay"),
             )
         fused = self.fusion(
             conditioned_protein,
@@ -308,15 +370,20 @@ class BindraModel(nn.Module):
             need_attention=need_attention,
         )
 
+        def pool(pooler, features, mask):
+            """Learned relevance where enabled, a plain mean otherwise."""
+            return masked_mean(features, mask) if pooler is None else pooler(features, mask)
+
         pair = torch.cat(
             (
-                masked_mean(fused.protein, protein_mask),
-                masked_mean(fused.ligand, ligand_mask),
+                pool(self.protein_pool, fused.protein, protein_mask),
+                pool(self.ligand_pool, fused.ligand, ligand_mask),
                 # One block per readout component when the arm declares a split.
                 adapted["ligand_graph"],
-                # The pre-fusion protein mean: a path that does not depend on
-                # attention having found anything.
-                masked_mean(adapted["protein"], protein_mask),
+                # The pre-fusion protein summary: a path that does not depend
+                # on cross-attention having found anything. Pooled the same way
+                # so the two protein blocks are comparable.
+                pool(self.protein_pool, adapted["protein"], protein_mask),
             ),
             dim=-1,
         )

@@ -76,17 +76,67 @@ def _pilot_selection(frame, n: int):
     return frame.loc[seen[:n]].reset_index(drop=True)
 
 
-def _encoder(device, *, batch_hint: str = "") -> tuple:
+#: ESM-C 600M has 36 transformer blocks. Used to space layers evenly.
+ESMC_600M_BLOCKS = 36
+
+
+def _even_layers(count: int, depth: int = ESMC_600M_BLOCKS) -> tuple[int, ...]:
+    """``count`` layers spaced evenly through the stack, final layer included.
+
+    Exists so the common case needs no leading-minus argument. ``--layers``
+    takes values like ``-25`` and argparse reads a bare ``-25,...`` as another
+    option, so that spelling needs ``--layers="..."`` and silently fails
+    without the equals sign. ``--n-layers 4`` has no such trap.
+    """
+    if count < 1:
+        raise SystemExit(f"--n-layers must be >= 1, got {count}")
+    if count > depth:
+        raise SystemExit(f"--n-layers {count} exceeds the {depth}-block stack")
+    if count == 1:
+        return (-1,)
+    step = (depth - 1) / (count - 1)
+    return tuple(sorted({-1 - round(i * step) for i in range(count)}))
+
+
+def _parse_layers(raw):
+    """``'-25,-17,-9,-1'`` -> ``(-25, -17, -9, -1)``; None or empty -> None."""
+    if not raw:
+        return None
+    try:
+        layers = tuple(int(part) for part in str(raw).split(",") if part.strip())
+    except ValueError as exc:
+        raise SystemExit(f"--layers must be comma-separated integers: {exc}") from exc
+    if not layers:
+        return None
+    if any(layer >= 0 for layer in layers):
+        raise SystemExit(
+            "--layers must be negative offsets from the top of the stack "
+            f"(-1 is the final layer), got {list(layers)}"
+        )
+    return layers
+
+
+def _encoder(device, *, batch_hint: str = "", layers=None) -> tuple:
     from bindra.encoders.protein_esmc import EXPECTED_ESMC_600M_DIM, ESMCProteinEncoder
 
     # Frozen is pinned here rather than inherited from the default. Caching
     # requires it -- a cached feature is only valid because it is a
     # deterministic function of the sequence -- so this path states the
     # requirement instead of depending on a default it does not control.
-    encoder = ESMCProteinEncoder(device=device, n_trainable_layers=0)
+    encoder = ESMCProteinEncoder(device=device, n_trainable_layers=0, layers=layers)
     print(f"[{INFO}] loading {encoder.checkpoint} @ {encoder.revision}{batch_hint}", flush=True)
+    if layers:
+        print(
+            f"[{INFO}] caching {len(layers)} layers {list(layers)} per residue; "
+            f"the cache will be ~{len(layers)}x the 14.0 GiB single-layer size "
+            "and carries a different cache key",
+            flush=True,
+        )
     checksum = encoder.weights_checksum()
-    metadata = encoder.metadata(EXPECTED_ESMC_600M_DIM, weights_checksum=checksum)
+    # The stored width is every requested layer concatenated.
+    metadata = encoder.metadata(
+        EXPECTED_ESMC_600M_DIM * encoder.n_layers, weights_checksum=checksum
+    )
     print(f"[{OK}] weights checksum {checksum[:16]}...", flush=True)
     return encoder, metadata
 
@@ -200,7 +250,18 @@ def cmd_proteins(args) -> int:
     )
 
     out = Path(args.out) if args.out else default_cache_root() / "proteins"
-    encoder, metadata = _encoder(device)
+    explicit = _parse_layers(getattr(args, "layers", None))
+    count = getattr(args, "n_layers", None)
+    if explicit and count:
+        print(
+            f"[{FAIL}] pass --layers or --n-layers, not both; they disagree "
+            "about which layers to cache",
+            flush=True,
+        )
+        return 2
+    encoder, metadata = _encoder(
+        device, layers=explicit or (_even_layers(count) if count else None)
+    )
 
     selection = _pilot_selection(frame, args.pilot) if args.pilot else frame
     label = f"pilot({args.pilot})" if args.pilot else "full"
@@ -420,11 +481,31 @@ def main(argv: list[str] | None = None) -> int:
         help="Encode a length-stratified pilot of N constructs and project the full run.",
     )
     proteins.add_argument("--allow-cpu", action="store_true", help="Permit CPU (very slow).")
+    proteins.add_argument(
+        "--n-layers", type=int, default=None, metavar="N",
+        help="Cache N layers spaced evenly through ESM-C's 36 blocks, final "
+             "layer always included. Prefer this over --layers: it needs no "
+             "leading minus, which argparse reads as another option. "
+             "--n-layers 4 gives -36,-24,-12,-1.",
+    )
+    proteins.add_argument(
+        "--layers", default=None,
+        help="Comma-separated negative offsets from the top of the ESM-C stack, "
+             "e.g. '-25,-17,-9,-1'. Default caches the final layer alone, which "
+             "is the layer most specialised for ESM-C's own masked-token "
+             "objective rather than the one richest in structure. More layers "
+             "multiply cache size (one layer is 14.0 GiB over 10,820 targets) "
+             "and change the cache key, so an existing cache is refused rather "
+             "than mis-read.",
+    )
     proteins.set_defaults(func=cmd_proteins)
 
     knowledge = subparsers.add_parser(
         "knowledge",
-        help="Precompute KPGT fingerprints and descriptors (the 81% bottleneck).",
+        # argparse runs help strings through %-formatting, so a literal percent
+        # must be doubled. Undoubled, `cache --help` raises
+        # "unsupported format character" instead of printing help.
+        help="Precompute KPGT fingerprints and descriptors (the 81%% bottleneck).",
     )
     knowledge.add_argument("--processed", default="data/processed/202610")
     knowledge.add_argument("--out", default="data/cache/knowledge")

@@ -59,6 +59,18 @@ class AdapterConfig:
     #: node and a mean, two thirds of it knowledge, all compressed into a single
     #: ``model_dim`` block beside three others.
     graph_components: tuple[int, ...] | None = None
+    #: How many ESM-C layers the protein cache holds, concatenated along the
+    #: feature axis. ``1`` is the historical single-layer cache. Above 1,
+    #: :class:`LayerMix` collapses them with learned weights before the adapter,
+    #: so ``protein_dim`` here remains the width of **one** layer.
+    protein_layers: int = 1
+    #: Width of the per-observation assay-condition vector, or 0 for none.
+    assay_dim: int = 0
+
+    @property
+    def protein_cache_dim(self) -> int:
+        """Width the cache actually stores, which is what the model is handed."""
+        return self.protein_dim * self.protein_layers
 
     @property
     def graph_blocks(self) -> int:
@@ -117,7 +129,169 @@ class AdapterConfig:
             "model_dim": self.model_dim,
             "dropout": self.dropout,
             "bottleneck_dim": self.bottleneck_dim,
+            "protein_layers": self.protein_layers,
+            "assay_dim": self.assay_dim,
         }
+
+
+class LayerMix(nn.Module):
+    """Collapse several cached ESM-C layers into one, with learned weights.
+
+    The cache held **only the final layer** -- ``last_hidden_state``, after the
+    final LayerNorm. That is the representation most specialised for ESM-C's own
+    masked-token objective, and it is not generally the one that carries the most
+    structural signal. A scalar mix over several layers lets the model choose,
+    and costs one weight per layer.
+
+    **Identity at initialisation**, like :class:`KnowledgeFiLM`: the logits are
+    set so the softmax puts essentially all mass on the last layer, so a model
+    built with a multi-layer cache starts out seeing exactly what the
+    single-layer model saw. Switching this on is then an ablation rather than a
+    different model with different weights.
+
+    Each layer is normalised separately first. Layer norms across a transformer
+    stack differ by a large factor, and mixing raw states would make the weights
+    a statement about magnitude rather than usefulness.
+    """
+
+    #: Logit given to the last layer at init. At 8.0 a four-layer mix puts
+    #: 0.9990 of the softmax mass on the last layer; measured deviation from
+    #: last-layer-only is ~5e-3 on unit-scale inputs. Close enough that the
+    #: first optimiser steps see today's model, not an exact identity -- unlike
+    #: AttentionPool and KnowledgeFiLM, which are exact.
+    LAST_LAYER_LOGIT = 8.0
+
+    def __init__(self, layer_dim: int, n_layers: int) -> None:
+        super().__init__()
+        if n_layers < 1:
+            raise AdapterError(f"n_layers must be >= 1, got {n_layers}")
+        self.layer_dim = layer_dim
+        self.n_layers = n_layers
+        self.norms = nn.ModuleList(nn.LayerNorm(layer_dim) for _ in range(n_layers))
+        logits = torch.zeros(n_layers)
+        logits[-1] = self.LAST_LAYER_LOGIT
+        self.logits = nn.Parameter(logits)
+
+    def weights(self) -> torch.Tensor:
+        return torch.softmax(self.logits, dim=0)
+
+    def forward(self, features: torch.Tensor) -> torch.Tensor:
+        expected = self.layer_dim * self.n_layers
+        if features.shape[-1] != expected:
+            raise AdapterError(
+                f"expected {self.n_layers} layers of {self.layer_dim} "
+                f"({expected} wide), got {features.shape[-1]}. The cache and the "
+                "model disagree about how many layers were stored."
+            )
+        if self.n_layers == 1:
+            return self.norms[0](features)
+        parts = torch.split(features, self.layer_dim, dim=-1)
+        weights = self.weights()
+        stacked = torch.stack(
+            [norm(part) for norm, part in zip(self.norms, parts)], dim=0
+        )
+        return (weights.view(-1, *([1] * (stacked.dim() - 1))) * stacked).sum(0)
+
+
+class AttentionPool(nn.Module):
+    """Pool a padded sequence by learned relevance instead of averaging it.
+
+    A binding site is roughly 20-30 residues of a median 454, so a plain mean
+    over residues dilutes whatever the fusion stack found by more than an order
+    of magnitude before it reaches the heads. This scores each position and
+    takes a weighted sum instead.
+
+    **Exactly equal to** :func:`masked_mean` **at initialisation.** The scorer is
+    zero-initialised, so every real position gets the same logit and the softmax
+    is uniform over the mask; the head-combining projection is initialised to
+    average its heads. Both properties together mean a model built with pooling
+    on and one built with it off are bit-identical until the scorer learns
+    something -- so the ablation measures the pooling, not a different draw.
+
+    Multiple heads because a pocket is not one thing: separate heads can settle
+    on the catalytic residues, the hydrophobic wall and the solvent-exposed rim
+    without competing for one softmax.
+    """
+
+    def __init__(self, model_dim: int, *, num_heads: int = 4, dropout: float = 0.0) -> None:
+        super().__init__()
+        if num_heads < 1:
+            raise AdapterError(f"num_heads must be >= 1, got {num_heads}")
+        self.model_dim = model_dim
+        self.num_heads = num_heads
+        self.scorer = nn.Linear(model_dim, num_heads)
+        nn.init.zeros_(self.scorer.weight)
+        nn.init.zeros_(self.scorer.bias)
+        self.dropout = nn.Dropout(dropout)
+        self.combine = nn.Linear(num_heads * model_dim, model_dim, bias=False)
+        # Average the heads at init. With a uniform softmax above, every head
+        # returns the same masked mean, so this reproduces masked_mean exactly.
+        with torch.no_grad():
+            eye = torch.eye(model_dim).repeat(1, num_heads) / num_heads
+            self.combine.weight.copy_(eye)
+
+    def forward(self, features: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        if mask.dtype is not torch.bool:
+            raise AdapterError(f"mask must be bool, got {mask.dtype}")
+        if features.shape[-1] != self.model_dim:
+            raise AdapterError(
+                f"expected last dimension {self.model_dim}, got {features.shape[-1]}"
+            )
+        # [B, L, H]; padding gets -inf so it cannot take softmax mass. Computed
+        # in float32: a bf16 softmax over 34,350 residues loses the tail.
+        logits = self.scorer(features).float()
+        logits = logits.masked_fill(~mask.unsqueeze(-1), float("-inf"))
+        weights = torch.softmax(logits, dim=-2).to(features.dtype)
+        weights = self.dropout(weights)
+        # [B, H, L] x [B, L, D] -> [B, H, D] -> [B, H * D]
+        pooled = torch.einsum("blh,bld->bhd", weights, features)
+        return self.combine(pooled.flatten(start_dim=-2))
+
+    def attention(self, features: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        """The pooling weights themselves, ``[B, L, H]``, for iBAM.
+
+        Where the model decided the binding site is, which is a claim worth
+        being able to inspect rather than only act on.
+        """
+        logits = self.scorer(features).float()
+        logits = logits.masked_fill(~mask.unsqueeze(-1), float("-inf"))
+        return torch.softmax(logits, dim=-2)
+
+
+class AssayEncoder(nn.Module):
+    """Embed the recorded assay conditions of one measurement.
+
+    An IC50 is not a constant of a protein-ligand pair: it moves with substrate
+    and enzyme concentration, with pH and temperature, and with how carefully the
+    source curated it. IC50 is 72% of this corpus, and the conditions are partly
+    *recorded* -- so some of what the replicate-noise floor attributes to
+    irreducible scatter is in columns the model was never shown.
+
+    **Only descriptive conditions are encoded here, never group identity.**
+    ``comparability_group_id`` and ``replicate_group_id`` would let the model
+    recognise *which assay* a row came from, and since replicates of one
+    measurement share a group, that is a route to the label rather than a
+    property of the experiment. They are excluded deliberately; see
+    ``ASSAY_FIELDS`` in :mod:`bindra.data.assay`.
+    """
+
+    def __init__(self, assay_dim: int, config: AdapterConfig) -> None:
+        super().__init__()
+        self.assay_dim = assay_dim
+        self.norm = nn.LayerNorm(assay_dim)
+        self.project = nn.Sequential(
+            nn.Linear(assay_dim, config.model_dim),
+            nn.GELU(),
+            nn.Linear(config.model_dim, config.model_dim),
+        )
+        self.output_norm = nn.LayerNorm(config.model_dim)
+
+    def forward(self, assay: torch.Tensor) -> torch.Tensor:
+        if assay.shape[-1] != self.assay_dim:
+            raise AdapterError(
+                f"expected assay width {self.assay_dim}, got {assay.shape[-1]}"
+            )
+        return self.output_norm(self.project(self.norm(assay)))
 
 
 class FeatureAdapter(nn.Module):
@@ -166,8 +340,20 @@ class SharedAdapters(nn.Module):
     def __init__(self, config: AdapterConfig) -> None:
         super().__init__()
         self.config = config
+        # Several cached layers collapse to one before the adapter sees them,
+        # so the adapter's input width is one layer regardless of how many the
+        # cache holds. None when the cache is single-layer, so a checkpoint
+        # trained against the old cache still loads.
+        self.layer_mix = (
+            LayerMix(config.protein_dim, config.protein_layers)
+            if config.protein_layers > 1
+            else None
+        )
         self.protein = FeatureAdapter(config.protein_dim, config)
         self.ligand = FeatureAdapter(config.ligand_dim, config)
+        self.assay = (
+            AssayEncoder(config.assay_dim, config) if config.assay_dim else None
+        )
         # One adapter per readout part when the arm declares a split, so each
         # part reaches the pair vector at full model width instead of sharing a
         # single compressed block. `ligand_graph` keeps its name for the
@@ -190,14 +376,29 @@ class SharedAdapters(nn.Module):
         protein_features: torch.Tensor,
         ligand_features: torch.Tensor,
         ligand_graph_features: torch.Tensor | None = None,
+        assay_features: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         """Project all streams in one call, so no caller adapts only one."""
+        if self.layer_mix is not None:
+            protein_features = self.layer_mix(protein_features)
         result = {
             "protein": self.protein(protein_features),
             "ligand": self.ligand(ligand_features),
         }
         if ligand_graph_features is not None:
             result["ligand_graph"] = self._adapt_graph(ligand_graph_features)
+        if assay_features is not None:
+            if self.assay is None:
+                raise AdapterError(
+                    "assay features were supplied but these adapters were built "
+                    "with assay_dim=0; they would be silently dropped"
+                )
+            result["assay"] = self.assay(assay_features)
+        elif self.assay is not None:
+            raise AdapterError(
+                "these adapters were built with an assay encoder but no assay "
+                "features were supplied"
+            )
         return result
 
     def _adapt_graph(self, features: torch.Tensor) -> torch.Tensor:
@@ -247,11 +448,23 @@ class KnowledgeFiLM(nn.Module):
     identity property, which is the more valuable of the two.
     """
 
-    def __init__(self, config: AdapterConfig, *, knowledge_blocks: int = 2) -> None:
+    def __init__(
+        self,
+        config: AdapterConfig,
+        *,
+        knowledge_blocks: int = 2,
+        assay_conditioning: bool = False,
+    ) -> None:
         super().__init__()
         self.config = config
         self.knowledge_blocks = knowledge_blocks
         width = knowledge_blocks * config.model_dim
+        # The assay context joins the molecule's knowledge as a second thing
+        # that modulates rather than is appended. Same reasoning: an appended
+        # assay vector can be ignored, a multiplicative one cannot.
+        self.assay_conditioning = assay_conditioning
+        if assay_conditioning:
+            width += config.model_dim
         self.norm = nn.LayerNorm(width)
         # Four outputs per feature: scale and shift, for the protein and the
         # ligand stream.
@@ -264,6 +477,7 @@ class KnowledgeFiLM(nn.Module):
         protein: torch.Tensor,
         ligand: torch.Tensor,
         ligand_graph: torch.Tensor,
+        assay: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         model_dim = self.config.model_dim
         needed = self.knowledge_blocks * model_dim
@@ -274,7 +488,21 @@ class KnowledgeFiLM(nn.Module):
                 f"{ligand_graph.shape[-1]}; this arm declares fewer components "
                 "than the conditioner expects"
             )
-        knowledge = self.norm(ligand_graph[..., :needed])
+        context = ligand_graph[..., :needed]
+        if self.assay_conditioning:
+            if assay is None:
+                raise AdapterError(
+                    "FiLM was built with assay conditioning but no assay vector "
+                    "was supplied. Silently conditioning on zeros would make "
+                    "every measurement look like the same experiment."
+                )
+            context = torch.cat((context, assay), dim=-1)
+        elif assay is not None:
+            raise AdapterError(
+                "an assay vector was supplied to a FiLM built without assay "
+                "conditioning; it would be silently ignored"
+            )
+        knowledge = self.norm(context)
         scale_protein, shift_protein, scale_ligand, shift_ligand = torch.split(
             self.project(knowledge), model_dim, dim=-1
         )
