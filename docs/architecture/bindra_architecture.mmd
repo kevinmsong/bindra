@@ -52,20 +52,20 @@ subgraph ENC["ENCODERS"]
 
   subgraph PROT["PROTEIN · frozen"]
     ESMC["`**Protein sequence → ESM-C 600M**
-One amino-acid string per target; median 454
-residues, longest 34,350. Out comes one vector
-per residue, from 573,632,640 **frozen** weights.
-They stay frozen because 572 effective target units
-cannot fine-tune a model this size without fitting
-the targets rather than the binding.
+One amino-acid string per target; median 454 residues,
+longest 34,350. 573,632,640 weights, all **frozen**: 572
+effective target units cannot fine-tune a model this size
+without fitting the targets rather than the binding.
 
-**v2 keeps four layers, not one**, spaced through the
-36-block stack. The final layer is the one most
-specialised for ESM-C's own masked-token objective,
-rather than the one richest in structure.`"]
+All 36 blocks still run. **v2 stores four taps on the
+stream** rather than one, at blocks 1, 13, 24 and 36. The
+last block is the one most specialised for ESM-C's own
+masked-token objective, not the one richest in structure.`"]
     CACHE[("`**Residue cache** · 14.0 → 56 GiB
 All 10,820 targets encoded once, reproducing
 bit-for-bit, which is what makes reuse safe.
+Four taps and not all 37: one layer is 14 GiB,
+so the whole stack would be ~518.
 
 The cache **declares its own layer set** and every
 reader asks it. Measured: the last of the four
@@ -104,10 +104,10 @@ questions is what forced them to be discarded before.`"]
 
 subgraph ADPT["SHARED ADAPTERS · one copy · 1,539,944"]
   AP["`**Protein → 256**
-**v2: LayerMix** picks a weighted blend of the four
-cached layers first, one weight each. Starts at
-99.9% last layer, so it begins as v1. Then 1152
-narrows to 256, a 4.5x squeeze rather than 12x.`"]
+**v2: LayerMix** blends the four taps into one 1152-wide
+vector, one learned weight each, starting at 99.9% on
+block 36 so it begins as v1. Then 1152 narrows to 256:
+a 4.5x squeeze against v1's 12x.`"]
   AL["`**Bonds → 256**
 96 per bond, normalized.`"]
   AG["`**Summary → 3 × 256**
