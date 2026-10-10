@@ -1,5 +1,5 @@
 ---
-title: "BINDRA-v2 · 7,393,163 trainable parameters · v1 measured, v2 built and untrained"
+title: "BINDRA-v2 · 2,600,071 trainable parameters · v1 measured, v2 built and untrained"
 config:
   theme: base
   themeVariables:
@@ -13,7 +13,7 @@ config:
   themeCSS: "text, .nodeLabel, .edgeLabel, .cluster-label, span, p { font-family: Arial, Helvetica, sans-serif !important; }"
   flowchart:
     htmlLabels: false
-    wrappingWidth: 300
+    wrappingWidth: 330
     nodeSpacing: 20
     rankSpacing: 30
     padding: 10
@@ -102,19 +102,20 @@ One vector per bond, plus *two* masks: real rather than padding, and **drawable*
 molecule or not. Knowledge nodes are real but not drawable, and conflating those two
 questions is what forced them to be discarded before.`"]
 
-subgraph ADPT["SHARED ADAPTERS · one copy · 1,539,944"]
-  AP["`**Protein → 256**
+subgraph ADPT["SHARED ADAPTERS · one copy · 294,792"]
+  AP["`**Protein → 160**
 **v2: LayerMix** blends the four taps into one 1152-wide
-vector, one learned weight each, starting at 99.9% on
-block 36 so it begins as v1. Then 1152 narrows to 256:
-a 4.5x squeeze against v1's 12x.`"]
-  AL["`**Bonds → 256**
+vector, one weight each, starting at 99.9% on block 36 so
+it begins as v1. Then one direct map to 160. An
+expand-then-contract adapter cost 1,051,136 for nothing
+and was dropped.`"]
+  AL["`**Bonds → 160**
 96 per bond, normalized.`"]
-  AG["`**Summary → 3 × 256**
+  AG["`**Summary → 3 × 160**
 Each part projected on its own, so the
 fingerprint is never averaged in with
 the properties.`"]
-  ASSAY["`**v2: assay conditions → 256** · 50 in
+  ASSAY["`**v2: assay conditions → 160** · 50 in
 pH/temperature bucket, IC50 tier, source
 class, confidence. **IC50 is 72.2% of the
 corpus and is not a constant of the pair**:
@@ -123,33 +124,39 @@ concentration, and v1 never read it.
 Group ids excluded, they lead to the label.`"]
 end
 
-FILM["`**Knowledge and assay conditioning · FiLM** · 788,992
+FILM["`**Knowledge and assay conditioning · FiLM** · 145,088
 Global properties *rescale* every residue and bond rather than being appended at the end:
 an appended vector can be ignored, a multiplied one cannot. Starts as an exact no-op, so
-switching it off compares the same model, not a new draw.`"]
+switching it off compares the same model, not a new draw.
+Projected through a 128-wide bottleneck: this emits a scale and a shift, not a
+representation, and the full map was the largest block outside fusion.`"]
 
-subgraph FUSE["PROTEIN MEETS LIGAND · 2 layers × 8 heads · 2,108,416"]
+subgraph FUSE["PROTEIN MEETS LIGAND · 2 layers × 8 heads · 826,240"]
   P2L["`**Protein looks at ligand**
 Each residue spreads attention over the
-molecule's bonds. 256 → 512 → 256.`"]
+molecule's bonds. 160 → 320 → 160.`"]
   NOTE["`Two separate sets of weights, side by
 side. Neither sees the other's output,
 and one is **not** the transpose of the other.`"]
   L2P["`**Ligand looks at protein**
 Each bond spreads attention over the
-residues. 256 → 512 → 256.`"]
+residues. 160 → 320 → 160.`"]
 end
 
-POOL["`**v2: pooled by relevance, not averaged** · 526,344 · 1,536 numbers, six blocks
+POOL["`**v2: pooled by relevance, not averaged** · 103,044 · 960 numbers, six blocks
 Fused residues · fused bonds · protein *before* fusion · fingerprint · properties · bond average.
 A binding site is ~20-30 residues of a median 454, so **v1 averaged the signal away
-by a factor of 15 to 20**. Four heads now score each residue instead. Exactly equal to
+by a factor of 15 to 20**. Two heads now score each residue instead. Exactly equal to
 the mean at initialisation, so the change is an ablation and not a different model.`"]
 
-subgraph HEAD["THREE PREDICTORS · 1,378,563"]
-  HKD["`**pKd** · 1536 → 256 → 256 → 1`"]
-  HKI["`**pKi** · 1536 → 256 → 256 → 1`"]
-  HIC["`**pIC50** · 1536 → 256 → 256 → 1`"]
+subgraph HEAD["THREE PREDICTORS · one shared trunk · 180,003"]
+  HKD["`**pKd** · 160 → 1`"]
+  HKI["`**pKi** · 160 → 1`"]
+  HIC["`**pIC50** · 160 → 1`"]
+  HNOTE["`One trunk, 960 → 160 → 160, is 179,520 of the 180,003.
+Three whole MLPs over three correlated endpoints cost
+918,528 more. Each endpoint keeps its **own** output
+layer, so nothing is mixed across them.`"]
 end
 
 GATHER{{"`**Score only the endpoint that was measured**
@@ -308,4 +315,4 @@ class FILM,ASSAY,K4 conditioning
 class GATHER,LOCK,DNO,K5 gate
 class LEX,LCEN,LAUX,LRANK,K6 lossbox
 class DCOND,DDEN,DDEC,PLOSS,UENS,UCONF,K7 planned
-class NOTE,IBAM,FISHING note
+class NOTE,HNOTE,IBAM,FISHING note
