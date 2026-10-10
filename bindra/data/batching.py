@@ -248,6 +248,51 @@ class PairBatch:
         )
 
 
+
+def dataset_cache_key(
+    processed: "Path | str",
+    split_directory: "Path | str",
+    partition: str,
+    metadata: "EncoderMetadata",
+    limit: "int | None",
+) -> str:
+    """Content digest of everything the assembled dataset depends on.
+
+    Every input is a CONTENT hash, not a path or a timestamp: the combined
+    sha256 of the observation shards, the split manifest's own sha256, and the
+    encoder contract. A rebuilt corpus or a rebuilt split changes the key and
+    the cache is simply missed, rather than serving rows that no longer match.
+
+    The encoder metadata is in here because ``_unique_keys`` is derived from
+    ``metadata.cache_key(sequence)`` -- a different protein cache means
+    different keys for the same observations.
+    """
+    import hashlib
+    import json as _json
+
+    payload = _json.loads(
+        (Path(processed) / "qc_report.json").read_text(encoding="utf-8")
+    )
+    observations = payload["artifacts"]["observations"]
+    manifest = _json.loads(
+        (Path(split_directory) / "manifest.json").read_text(encoding="utf-8")
+    )
+    parts = {
+        "schema": "pair-dataset-v1",
+        "observations_sha256": observations.get("combined_sha256"),
+        "observation_rows": observations.get("rows"),
+        "columns": list(OBSERVATION_COLUMNS),
+        "split_manifest_sha256": manifest.get("manifest_sha256"),
+        "split_id": manifest.get("split_id"),
+        "partition": partition,
+        "limit": limit,
+        "encoder": metadata.to_dict() if hasattr(metadata, "to_dict") else str(metadata),
+    }
+    return hashlib.sha256(
+        _json.dumps(parts, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()[:32]
+
+
 class PairDataset:
     """The curated observations of one split partition, joined to their inputs.
 
@@ -267,6 +312,7 @@ class PairDataset:
         length_multiple: int = 128,
         ligand_builder: LigandBatchBuilder | None = None,
         with_assay: bool = False,
+        cache_dir: "Path | str | None" = None,
     ) -> None:
         import pandas as pd
 
@@ -294,6 +340,20 @@ class PairDataset:
         self.partition = partition
         self.protein_cache = protein_cache
         self._metadata: EncoderMetadata = protein_cache.metadata
+
+        # The assembled dataset is a pure function of the corpus, the split,
+        # the partition, the limit and the encoder contract, and assembling it
+        # means a full pass over 2.7M rows plus two joins -- about ten minutes,
+        # repeated identically on every run. Keyed on content hashes, so a
+        # rebuilt corpus or split misses the cache rather than serving stale
+        # rows.
+        self._cache_key = None
+        if cache_dir is not None:
+            self._cache_key = dataset_cache_key(
+                self.processed, split_directory, partition, self._metadata, limit
+            )
+            if self._load_cached(Path(cache_dir) / self._cache_key):
+                return
 
         _, assignment = read_split(Path(split_directory))
         wanted = {o for o, p in assignment.items() if p == partition}
@@ -366,6 +426,76 @@ class PairDataset:
             dtype=np.int32,
             count=len(self.frame),
         )
+        if cache_dir is not None and self._cache_key:
+            self._save_cached(Path(cache_dir) / self._cache_key)
+
+    # -- the disk cache --------------------------------------------------
+
+    def _load_cached(self, directory: Path) -> bool:
+        """Restore a previously assembled dataset. False if there is none.
+
+        A failure to read is treated as a miss, never as an error: the
+        expensive path still works, and a half-written cache from a killed run
+        must not stop training.
+        """
+        import json
+
+        import pandas as pd
+
+        marker = directory / "dataset.json"
+        if not marker.exists():
+            return False
+        try:
+            payload = json.loads(marker.read_text(encoding="utf-8"))
+            self.frame = pd.read_parquet(directory / "frame.parquet")
+            self.lengths = self.frame["sequence_length"].to_numpy().astype(int)
+            self._unique_keys = payload["unique_keys"]
+            self._key_index = np.load(directory / "key_index.npy")
+            if len(self._key_index) != len(self.frame):
+                raise ValueError("key index and frame disagree on length")
+        except Exception as exc:  # noqa: BLE001 - a bad cache is a miss, not a crash
+            print(
+                f"[ warn  ] dataset cache at {directory.name} unreadable "
+                f"({type(exc).__name__}); rebuilding",
+                flush=True,
+            )
+            return False
+        print(
+            f"[  ok   ] dataset cache hit: {len(self.frame):,} {self.partition} "
+            f"rows restored without a corpus pass",
+            flush=True,
+        )
+        return True
+
+    def _save_cached(self, directory: Path) -> None:
+        """Write the assembled dataset. A failure here must not stop a run."""
+        import json
+
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            self.frame.to_parquet(directory / "frame.parquet", index=False)
+            np.save(directory / "key_index.npy", self._key_index)
+            # Written LAST: its presence is what marks the cache complete, so
+            # a run killed mid-write leaves a miss rather than a torn entry.
+            (directory / "dataset.json").write_text(
+                json.dumps({
+                    "partition": self.partition,
+                    "rows": int(len(self.frame)),
+                    "unique_keys": list(self._unique_keys),
+                }),
+                encoding="utf-8",
+            )
+            print(
+                f"[  ok   ] dataset cached to {directory.name} "
+                f"({len(self.frame):,} rows); later runs skip the corpus pass",
+                flush=True,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"[ warn  ] could not write the dataset cache "
+                f"({type(exc).__name__}: {exc}); continuing",
+                flush=True,
+            )
 
     @classmethod
     def from_queries(
