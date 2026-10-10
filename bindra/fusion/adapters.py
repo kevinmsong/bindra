@@ -66,6 +66,11 @@ class AdapterConfig:
     protein_layers: int = 1
     #: Width of the per-observation assay-condition vector, or 0 for none.
     assay_dim: int = 0
+    #: Hidden width inside :class:`KnowledgeFiLM`'s projection, or None for a
+    #: single map. The single map is the largest non-fusion block in the
+    #: model; a bottleneck here costs little because the conditioner emits a
+    #: scale and a shift, not a representation.
+    film_bottleneck: int | None = None
 
     @property
     def protein_cache_dim(self) -> int:
@@ -131,6 +136,7 @@ class AdapterConfig:
             "bottleneck_dim": self.bottleneck_dim,
             "protein_layers": self.protein_layers,
             "assay_dim": self.assay_dim,
+            "film_bottleneck": self.film_bottleneck,
         }
 
 
@@ -473,10 +479,25 @@ class KnowledgeFiLM(nn.Module):
             width += config.model_dim
         self.norm = nn.LayerNorm(width)
         # Four outputs per feature: scale and shift, for the protein and the
-        # ligand stream.
-        self.project = nn.Linear(width, 4 * config.model_dim)
-        nn.init.zeros_(self.project.weight)
-        nn.init.zeros_(self.project.bias)
+        # ligand stream. A full width -> 4*model_dim map is the single largest
+        # non-fusion block in the model (788,992 at model_dim 256, 10.7% of
+        # the total) for what is a conditioning signal, not a representation.
+        # A bottleneck cuts it to roughly a quarter.
+        #
+        # The ZERO INIT moves to the last layer either way: that is what makes
+        # conditioning an exact no-op at initialisation, and therefore an
+        # ablation rather than a different model.
+        inner = config.film_bottleneck
+        if inner:
+            first = nn.Linear(width, inner)
+            last = nn.Linear(inner, 4 * config.model_dim)
+            nn.init.zeros_(last.weight)
+            nn.init.zeros_(last.bias)
+            self.project: nn.Module = nn.Sequential(first, nn.GELU(), last)
+        else:
+            self.project = nn.Linear(width, 4 * config.model_dim)
+            nn.init.zeros_(self.project.weight)
+            nn.init.zeros_(self.project.bias)
 
     def forward(
         self,

@@ -106,6 +106,7 @@ def _load_model(checkpoint: Path, device):
     payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
     stored = payload.get("provenance", {}).get("model", {})
     ligand = stored.get("ligand", {})
+    head_stored = stored.get("head", {})
     config = BindraConfig(
         protein_dim=stored.get("protein_dim", 1152),
         model_dim=stored.get("model_dim", 256),
@@ -125,7 +126,23 @@ def _load_model(checkpoint: Path, device):
         # different pair_dim and a state dict that will not load.
         feedforward_multiplier=stored.get("feedforward_multiplier", 4),
         split_graph_readout=stored.get("split_graph_readout", False),
-        head=AffinityHeadConfig(hidden_dim=stored.get("model_dim", 256)),
+        # Read from the checkpoint's own record rather than rebuilt from
+        # today's defaults. The head's shape is part of the state dict, so a
+        # default that drifts -- share_trunk in particular -- stops every
+        # older checkpoint loading. Every fallback here is the value that
+        # applied BEFORE the field existed, not the current default.
+        head=AffinityHeadConfig(
+            hidden_dim=head_stored.get("hidden_dim", stored.get("model_dim", 256)),
+            dropout=head_stored.get("dropout", 0.1),
+            num_layers=head_stored.get("num_layers", 2),
+            share_trunk=head_stored.get("share_trunk", False),
+        ),
+        film_bottleneck=stored.get("film_bottleneck"),
+        attention_pooling=stored.get("attention_pooling", False),
+        pool_heads=stored.get("pool_heads", 4),
+        protein_layers=stored.get("protein_layers", 1),
+        assay_conditioning=stored.get("assay_conditioning", False),
+        adapter_bottleneck=stored.get("adapter_bottleneck"),
     )
     model = BindraModel(config)
     model.load_state_dict(payload["model"])
@@ -604,6 +621,7 @@ def cmd_evaluate(args) -> int:
         protein_cache=cache,
         limit=args.limit,
         ligand_builder=builder,
+        cache_dir=args.dataset_cache or None,
     )
     loader = PairLoader(
         dataset,
@@ -714,6 +732,14 @@ def build_parser():
     parser.add_argument("--splits", default="data/splits/202610")
     parser.add_argument("--benchmarks", default="data/benchmarks/202610")
     parser.add_argument("--protein-cache", default="data/cache/proteins")
+    parser.add_argument(
+        "--dataset-cache", default="data/cache/datasets",
+        help="Where the assembled split partition is cached. Building it is a "
+             "full pass over 2.7M rows plus two joins, about ten minutes, and "
+             "it is identical every run. Keyed on the corpus and split content "
+             "hashes, so a rebuild misses rather than serving stale rows. "
+             "Pass '' to rebuild every time.",
+    )
     parser.add_argument("--regime", default="random_pair")
     parser.add_argument(
         "--partition", default="val", choices=("val", "cal", "test"),

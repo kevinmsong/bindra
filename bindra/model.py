@@ -144,7 +144,18 @@ class BindraConfig:
     assay_conditioning: bool = False
     #: Hidden width inside the feature adapters. ``None`` is a single linear
     #: map, which at model_dim 96 compressed ESM-C's 1152 by 12x in one step.
+    #:
+    #: Leave it None at model_dim 192 and above. It applies to EVERY adapter,
+    #: and the ligand ones take a 96-wide input: at bottleneck 512 those become
+    #: 96 -> 512 -> 256, wider in the middle than at either end, spending
+    #: parameters to expand a narrow stream before contracting it. Measured,
+    #: it costs 1,051,136 across the protein and graph adapters for no change
+    #: in what reaches fusion.
     adapter_bottleneck: int | None = None
+    #: Hidden width inside the FiLM projection. The full map is the largest
+    #: non-fusion block in the model; 128 cuts it from 788,992 to 232,064 and
+    #: keeps the exact no-op at initialisation.
+    film_bottleneck: int | None = None
     head: AffinityHeadConfig = field(default_factory=AffinityHeadConfig)
 
     def __post_init__(self) -> None:
@@ -171,6 +182,7 @@ class BindraConfig:
             dropout=self.dropout,
             graph_components=components,
             bottleneck_dim=self.adapter_bottleneck,
+            film_bottleneck=self.film_bottleneck,
             protein_layers=self.protein_layers,
             assay_dim=ASSAY_DIM if self.assay_conditioning else 0,
         )
@@ -209,6 +221,7 @@ class BindraConfig:
             "protein_layers": self.protein_layers,
             "assay_conditioning": self.assay_conditioning,
             "adapter_bottleneck": self.adapter_bottleneck,
+            "film_bottleneck": self.film_bottleneck,
             "dropout": self.dropout,
             "ligand": self.ligand.to_dict(),  # type: ignore[attr-defined]
             "ligand_arm": type(self.ligand).__name__,

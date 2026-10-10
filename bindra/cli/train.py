@@ -220,6 +220,7 @@ def cmd_fit(args) -> int:
     train = PairDataset(
         processed, split_directory, "train", protein_cache=cache, limit=args.limit,
         ligand_builder=ligand_builder, with_assay=args.assay_conditioning,
+        cache_dir=args.dataset_cache or None,
     )
     validation = PairDataset(
         processed,
@@ -229,6 +230,7 @@ def cmd_fit(args) -> int:
         limit=None if args.limit is None else max(1, args.limit // 8),
         ligand_builder=ligand_builder,
         with_assay=args.assay_conditioning,
+        cache_dir=args.dataset_cache or None,
     )
     policy = BatchingPolicy(
         residue_budget=args.residue_budget, max_pairs=args.max_pairs, seed=args.seed
@@ -270,7 +272,11 @@ def cmd_fit(args) -> int:
         protein_layers=args.protein_layers,
         assay_conditioning=args.assay_conditioning,
         adapter_bottleneck=args.adapter_bottleneck,
-        head=AffinityHeadConfig(hidden_dim=args.model_dim, dropout=args.dropout),
+        film_bottleneck=args.film_bottleneck or None,
+        head=AffinityHeadConfig(
+            hidden_dim=args.model_dim, dropout=args.dropout,
+            share_trunk=not args.no_share_head_trunk,
+        ),
     )
     model = BindraModel(config)
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -415,6 +421,14 @@ def build_parser():
     parser.add_argument("--processed", default="data/processed/202610")
     parser.add_argument("--splits", default="data/splits/202610")
     parser.add_argument("--protein-cache", default="data/cache/proteins")
+    parser.add_argument(
+        "--dataset-cache", default="data/cache/datasets",
+        help="Where the assembled split partition is cached. Building it is a "
+             "full pass over 2.7M rows plus two joins, about ten minutes, and "
+             "it is identical every run. Keyed on the corpus and split content "
+             "hashes, so a rebuild misses rather than serving stale rows. "
+             "Pass '' to rebuild every time.",
+    )
     parser.add_argument("--out", default="runs")
     parser.add_argument("--regime", default="random_pair")
     parser.add_argument("--tag", default="")
@@ -426,7 +440,27 @@ def build_parser():
     parser.add_argument("--patience", type=int, default=3)
     parser.add_argument("--ema", type=float, default=0.999)
     parser.add_argument("--dropout", type=float, default=0.1)
-    parser.add_argument("--model-dim", type=int, default=96)
+    parser.add_argument(
+        "--model-dim", type=int, default=160,
+        help="160 is the only width with a measured result on this split "
+             "(val RMSE 1.1718, and still falling when that run stopped). "
+             "96 was v1's and scored 1.2432.",
+    )
+    parser.add_argument(
+        "--film-bottleneck", type=int, default=128,
+        help="Hidden width in the FiLM projection. Without it the projection "
+             "is the largest non-fusion block in the model (788,992 at "
+             "model-dim 256) for what is a scale and a shift, not a "
+             "representation. 0 restores the full map.",
+    )
+    parser.add_argument(
+        "--no-share-head-trunk", action="store_true",
+        help="Give each endpoint its own whole MLP instead of one trunk with "
+             "three outputs. Costs 918,528 at model-dim 256 for three "
+             "near-identical networks over three correlated endpoints. The "
+             "endpoints stay separate either way: each keeps its own output "
+             "layer and nothing is mixed across them.",
+    )
     parser.add_argument(
         "--adapter-bottleneck", type=int, default=None,
         help="Hidden width inside each feature adapter. Default None is a "
@@ -434,7 +468,7 @@ def build_parser():
              "1152 by 12x in one step. A value here makes it a two-layer MLP.",
     )
     parser.add_argument(
-        "--pool-heads", type=int, default=4,
+        "--pool-heads", type=int, default=2,
         help="Attention-pooling heads over residues and ligand tokens.",
     )
     parser.add_argument(
@@ -462,7 +496,7 @@ def build_parser():
              "featurization and featurization is what the loop waits on; cached "
              "they read in 2.03 ms/mol against 37.01 live. Pass '' to compute live.",
     )
-    parser.add_argument("--fusion-layers", type=int, default=4)
+    parser.add_argument("--fusion-layers", type=int, default=2)
     parser.add_argument(
         "--feedforward-multiplier", type=int, default=2,
         help="Fusion feed-forward width, as a multiple of --model-dim. At the "
