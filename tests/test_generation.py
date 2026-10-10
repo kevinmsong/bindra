@@ -280,3 +280,159 @@ class TestDecodeHonesty:
 
         assert ":" not in first.smiles, f"map numbers leaked: {first.smiles}"
         assert first.smiles == second.smiles, "atom order changed the SMILES"
+
+
+class TestDeltaConditioning:
+    """The requested potency change, which the generator previously ignored.
+
+    Without it the model learns what analogs of a scaffold look like on a
+    target, but not which direction is wanted: it reproduces the distribution
+    of observed analogs rather than directional improvement.
+    """
+
+    def test_buckets_are_in_units_of_the_endpoint_noise_floor(self):
+        """A 0.7 log gain is real for Ki and inside the noise for Kd."""
+        from bindra.training.generation import encode_delta
+
+        ki, kd = 1, 0  # ENDPOINT_ORDER is Kd, Ki, IC50
+        same_delta = 0.7
+        ki_bucket = int(encode_delta([same_delta], [ki])[0][:5].argmax())
+        kd_bucket = int(encode_delta([same_delta], [kd])[0][:5].argmax())
+        assert ki_bucket > kd_bucket, (
+            "0.7 log units should read as an improvement for Ki (floor 0.641) "
+            "and as no real change for Kd (floor 0.945); a fixed threshold "
+            "would label them the same"
+        )
+
+    def test_a_change_inside_the_floor_is_no_change(self):
+        from bindra.training.generation import encode_delta
+
+        for delta in (-0.3, 0.0, 0.3):
+            bucket = int(encode_delta([delta], [1])[0][:5].argmax())
+            assert bucket == 2, f"{delta} on Ki should be the no-change bucket"
+
+    def test_direction_is_preserved_and_ordered(self):
+        from bindra.training.generation import encode_delta
+
+        buckets = [int(encode_delta([d], [1])[0][:5].argmax()) for d in (-3, -1, 0, 1, 3)]
+        assert buckets == sorted(buckets), f"buckets are not monotone in delta: {buckets}"
+        assert buckets[0] == 0 and buckets[-1] == 4
+
+    def test_the_scalar_is_clipped_so_one_pair_cannot_dominate(self):
+        from bindra.training.generation import encode_delta
+
+        assert float(encode_delta([100.0], [1])[0][5]) == pytest.approx(1.0)
+        assert float(encode_delta([-100.0], [1])[0][5]) == pytest.approx(-1.0)
+
+    def test_exactly_one_bucket_is_set(self):
+        from bindra.training.generation import DELTA_DIM, encode_delta
+
+        encoded = encode_delta([-5.0, 0.0, 5.0], [0, 1, 2])
+        assert encoded.shape == (3, DELTA_DIM)
+        assert torch.allclose(encoded[:, :5].sum(dim=1), torch.ones(3))
+
+    def test_the_denoiser_actually_responds_to_the_requested_delta(self):
+        """A conditioning channel the output ignores is decoration."""
+        from bindra.generation.digress.denoiser import DenoiserConfig, GraphDenoiser
+        from bindra.training.generation import DELTA_DIM, encode_delta
+
+        torch.manual_seed(0)
+        condition_dim = 3 + 12 + DELTA_DIM
+        model = GraphDenoiser(DenoiserConfig(
+            n_atom_types=A, n_bond_types=E, condition_dim=condition_dim,
+            model_dim=32, n_layers=2, n_heads=4,
+        )).eval()
+        atoms, bonds = _graph()
+        mask = torch.ones(B, N, dtype=torch.bool)
+        t = torch.zeros(B, dtype=torch.long)
+        base = torch.cat((torch.zeros(B, 3), torch.randn(B, 12)), dim=-1)
+
+        def logits_for(delta):
+            conditions = torch.cat(
+                (base, encode_delta([delta] * B, [1] * B)), dim=-1
+            ).unsqueeze(1)
+            with torch.no_grad():
+                return model(atoms, bonds, t, conditions, mask)[0]
+
+        improve, worsen = logits_for(+3.0), logits_for(-3.0)
+        assert not torch.allclose(improve, worsen, atol=1e-6), (
+            "asking for +3 and -3 log units gives identical predictions; the "
+            "delta channel is not reaching the output"
+        )
+
+    def test_delta_survives_a_round_trip_through_the_training_conditions(self):
+        from bindra.training.generation import DELTA_DIM, _conditions
+
+        items = [
+            {"seed": _DenseStub(), "endpoint": 1, "delta": +2.0},
+            {"seed": _DenseStub(), "endpoint": 1, "delta": -2.0},
+        ]
+        conditions = _conditions(items, torch.device("cpu"))
+        assert conditions.shape == (2, 3 + 12 + DELTA_DIM)
+        # The two rows must differ in the delta block and nowhere else.
+        assert not torch.equal(conditions[0, -DELTA_DIM:], conditions[1, -DELTA_DIM:])
+        assert torch.equal(conditions[0, :-DELTA_DIM], conditions[1, :-DELTA_DIM])
+
+
+class _DenseStub:
+    """Minimal stand-in for a DenseGraph, for the conditioning test."""
+
+    def __init__(self) -> None:
+        self.atoms = np.array([1, 1, 2, 0, 0], dtype=np.int64)
+        self.mask = np.array([True, True, True, False, False])
+        self.n_atoms = 3
+
+
+class TestLossAccounting:
+    """The reported loss must be the loss, not a number flattered by empties.
+
+    A molecule that *is* its own Murcko scaffold has no decorated atoms and no
+    non-scaffold bonds, so it scores nothing. Averaging those in as zero
+    reported a bond loss of 0.2143 when the real figure, recomputed from the
+    saved weights on the same data, was 1.2760.
+    """
+
+    def test_an_unscored_example_reports_zero_positions_not_zero_loss(self):
+        from bindra.training.generation import _masked_cross_entropy
+
+        logits = torch.randn(2, 5, 4)
+        target = torch.nn.functional.one_hot(torch.randint(0, 4, (2, 5)), 4).float()
+        empty = torch.zeros(2, 5, dtype=torch.bool)
+        loss, n = _masked_cross_entropy(logits, target, empty)
+        assert n == 0, "an unscored example must report zero positions"
+        assert float(loss) == 0.0
+
+    def test_it_counts_exactly_the_scored_positions(self):
+        from bindra.training.generation import _masked_cross_entropy
+
+        logits = torch.randn(2, 5, 4)
+        target = torch.nn.functional.one_hot(torch.randint(0, 4, (2, 5)), 4).float()
+        mask = torch.zeros(2, 5, dtype=torch.bool)
+        mask[0, :3] = True
+        mask[1, :2] = True
+        _, n = _masked_cross_entropy(logits, target, mask)
+        assert n == 5
+
+    def test_position_weighting_is_not_batch_weighting(self):
+        """Two examples with very different scored counts must not weigh equally."""
+        from bindra.training.generation import _masked_cross_entropy
+
+        torch.manual_seed(0)
+        target = torch.nn.functional.one_hot(torch.zeros(2, 10, dtype=torch.long), 4).float()
+        # Example 0: many positions, confidently right. Example 1: one position, wrong.
+        logits = torch.zeros(2, 10, 4)
+        logits[0, :, 0] = 10.0
+        logits[1, :, 3] = 10.0
+        many = torch.zeros(2, 10, dtype=torch.bool); many[0, :] = True
+        one = torch.zeros(2, 10, dtype=torch.bool); one[1, :1] = True
+
+        loss_many, n_many = _masked_cross_entropy(logits, target, many)
+        loss_one, n_one = _masked_cross_entropy(logits, target, one)
+        batch_weighted = (float(loss_many) + float(loss_one)) / 2
+        position_weighted = (
+            float(loss_many) * n_many + float(loss_one) * n_one
+        ) / (n_many + n_one)
+        assert position_weighted < batch_weighted, (
+            "position weighting must let the ten confident positions outweigh "
+            "the single wrong one; batch weighting treats them as equals"
+        )

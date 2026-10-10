@@ -27,6 +27,12 @@ from dataclasses import dataclass, field
 #: module must share; stated here so a change breaks loudly.
 NO_BOND = 0
 
+#: Atom-vocabulary entries that are not elements. A padded position decodes to
+#: nothing at all, and handing its symbol to RDKit raises
+#: `Element '<pad>' not found` from deep inside the periodic table rather than
+#: anywhere that explains itself.
+NON_ATOM_SYMBOLS = frozenset({"", "*", "<pad>", "<PAD>", "pad", "none", "None"})
+
 
 class DecodeError(ValueError):
     """A generated graph could not be turned into a molecule at all."""
@@ -80,7 +86,7 @@ def decode_graph(
     index_map: dict[int, int] = {}
     for position, category in enumerate(atoms):
         symbol = atom_vocabulary[int(category)] if int(category) < len(atom_vocabulary) else None
-        if not symbol or symbol == "*":
+        if symbol is None or symbol in NON_ATOM_SYMBOLS:
             continue
         atom = Chem.Atom(symbol)
         # Carry the generated position through as an atom map number so the
@@ -206,6 +212,7 @@ def validity_report(decoded: "list[DecodedMolecule]") -> dict[str, object]:
 
 __all__ = [
     "NO_BOND",
+    "NON_ATOM_SYMBOLS",
     "DecodeError",
     "DecodedMolecule",
     "decode_graph",
