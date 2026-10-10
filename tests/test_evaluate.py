@@ -186,3 +186,88 @@ class TestAgainstTheRealRun:
         assert payload["partition"]["metrics"]["overall"]["n"] > 1000
         # Coverage honesty survives serialisation.
         assert set(payload["panels_not_scored"]) == set(UNSCORED_PANELS)
+
+
+class TestRowGrouping:
+    """The grouping keys behind the clustered intervals and macro averages.
+
+    These exist because the first implementation rebuilt a 235,473-entry dict
+    once per observation. That is 5.5e10 operations on a real partition and it
+    does not finish -- but on a toy fixture it looks fine, so only a test with
+    a realistic row count and a shuffled frame catches it.
+    """
+
+    def _dataset(self, n, seed=0):
+        import types
+
+        import pandas as pd
+
+        rng = np.random.default_rng(seed)
+        digests = np.array([f"h{i:04d}" for i in range(200)])
+        pick = rng.integers(0, len(digests), n)
+        frame = pd.DataFrame(
+            {
+                "observation_id": [f"o{i}" for i in range(n)],
+                "sequence_sha256": digests[pick],
+            }
+        )
+        # Shuffled on purpose: the frame's row order is not the prediction
+        # order, and a mapping that assumes it is would pass on sorted data.
+        return types.SimpleNamespace(frame=frame.sample(frac=1.0, random_state=1)), digests[pick]
+
+    def _groups_parquet(self, tmp_path):
+        import pandas as pd
+
+        digests = [f"h{i:04d}" for i in range(200)]
+        pd.DataFrame(
+            {"sequence_sha256": digests, "protein_group": [i % 37 for i in range(200)]}
+        ).to_parquet(tmp_path / "protein_groups.parquet", index=False)
+        return tmp_path
+
+    def test_it_resolves_in_prediction_order_not_frame_order(self, tmp_path):
+        from bindra.cli.evaluate import _row_grouping
+
+        processed = self._groups_parquet(tmp_path)
+        dataset, expected_digests = self._dataset(500)
+        order = [f"o{i}" for i in range(500)]
+        components, constructs, why = _row_grouping(processed, dataset, order)
+        assert why is None
+        assert list(constructs) == list(expected_digests)
+        assert list(components) == [int(d[1:]) % 37 for d in expected_digests]
+
+    def test_a_missing_component_refuses_rather_than_guessing(self, tmp_path):
+        """A wrong clustering looks exactly like a right one in the output."""
+        from bindra.cli.evaluate import _row_grouping
+
+        processed = self._groups_parquet(tmp_path)
+        dataset, _ = self._dataset(100)
+        dataset.frame = dataset.frame.assign(sequence_sha256="unknown-digest")
+        components, constructs, why = _row_grouping(
+            processed, dataset, [f"o{i}" for i in range(100)]
+        )
+        assert components is None and constructs is None
+        assert "no protein component" in why
+
+    def test_it_is_not_quadratic_in_the_row_count(self, tmp_path):
+        """Ten times the rows must not cost a hundred times the work."""
+        import time
+
+        from bindra.cli.evaluate import _row_grouping
+
+        processed = self._groups_parquet(tmp_path)
+
+        def timed(n):
+            dataset, _ = self._dataset(n)
+            order = [f"o{i}" for i in range(n)]
+            start = time.perf_counter()
+            assert _row_grouping(processed, dataset, order)[0] is not None
+            return time.perf_counter() - start
+
+        small, large = timed(2_000), timed(20_000)
+        # Linear would be ~10x. Quadratic would be ~100x. The parquet read is a
+        # fixed cost that dominates at these sizes, so the bound is loose on
+        # purpose -- it is here to catch an order-of-growth regression, not to
+        # police constant factors.
+        assert large < max(small * 25, 2.0), (
+            f"10x the rows cost {large / small:.0f}x the time; this looks quadratic"
+        )
