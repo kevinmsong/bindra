@@ -1,4 +1,4 @@
-"""BINDRA-v2's four upgrades, and the identity properties that make them ablations.
+"""BINDRA's four upgrades, and the identity properties that make them ablations.
 
 Each upgrade had to be switchable without reinitialising the model, or a
 comparison between v1 and v2 would measure the upgrade *and* a different random
@@ -47,7 +47,7 @@ def _config(**overrides):
 
 class TestArchitectureIdentity:
     def test_the_architecture_is_named_v2(self):
-        assert ARCHITECTURE_NAME == "BINDRA-v2"
+        assert ARCHITECTURE_NAME == "BINDRA"
 
     def test_everything_off_reproduces_v1_exactly(self):
         """With every v2 feature disabled, this must BE v1, parameter for parameter."""
@@ -210,7 +210,7 @@ class TestProvenanceRecordsTheUpgrades:
             "assay_conditioning", "adapter_bottleneck",
         ):
             assert key in recorded, f"{key} is not recorded in provenance"
-        assert recorded["architecture"] == "BINDRA-v2"
+        assert recorded["architecture"] == "BINDRA"
 
 
 class TestEndToEndForward:

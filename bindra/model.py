@@ -1,4 +1,4 @@
-"""BINDRA-v2: cached protein features and SMILES in, affinity out.
+"""BINDRA: cached protein features and SMILES in, affinity out.
 
 This is the seam the specification's end-to-end requirement runs through --
 "from target sequence and SMILES through affinity prediction plus iBAM" -- and the
@@ -69,7 +69,10 @@ from bindra.heads.affinity import AffinityHeadConfig, AffinityHeads, AffinityPre
 #: Name of this architecture, recorded in every provenance block so a results
 #: table says which model produced it. Bump it when the shape changes in a way
 #: that makes two runs incomparable.
-ARCHITECTURE_NAME = "BINDRA-v2"
+#: Written into every checkpoint's provenance. The "-v1"/"-v2" suffixes
+#: were dropped: the architecture is just BINDRA, and a run is identified
+#: by its own provenance rather than by a name that drifts.
+ARCHITECTURE_NAME = "BINDRA"
 
 
 class BindraModelError(ValueError):

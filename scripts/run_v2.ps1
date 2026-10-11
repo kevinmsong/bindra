@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Train BINDRA-v2 and the analog generator, then evaluate both.
+  Train BINDRA and the analog generator, then evaluate both.
 
 .DESCRIPTION
   Four stages, run in order, each logged to runs\logs\. The script STOPS at the
@@ -82,7 +82,7 @@ function Invoke-Stage {
   Write-Host "ok: $Name in $($elapsed.ToString('hh\:mm\:ss'))" -ForegroundColor Green
 }
 
-Write-Host "BINDRA-v2 pipeline"
+Write-Host "BINDRA pipeline"
 Write-Host "  tag            $Tag"
 Write-Host "  regime         $Regime"
 Write-Host "  protein cache  $ProteinCache"
