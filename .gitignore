@@ -15,6 +15,10 @@ envs/*/.venv/
 data/raw/
 data/processed/
 data/cache/
+# Third-party benchmark sets (Davis, KIBA) carry their own licences and are
+# downloaded, not produced here. Same rule as the rest: reconstructed from
+# their source, never vendored.
+data/external/
 *.pt
 *.safetensors
 *.npy

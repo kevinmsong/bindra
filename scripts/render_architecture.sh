@@ -10,7 +10,7 @@
 # Needs node (for npx); mermaid-cli and its headless Chromium are fetched on
 # first run and cached after that.
 #
-# -s 3 puts the PNG at 2352 x 2838, ratio 1.207 against letter portrait's
+# -s 3 puts the PNG at 2352 x 2904, ratio 1.235 against letter portrait's
 # 1.294, so it fits a letter page with a little vertical margin.
 #
 # WIDTH IS FIXED by mermaid-cli's viewport: every render comes out 2352 px
@@ -21,7 +21,9 @@
 # ratio but the subgraph titles then render struck through by the boxes
 # beneath them (SHARED ADAPTERS, THREE PREDICTORS, HOW ERROR IS COUNTED).
 # Narrowing wrappingWidth below ~280 hits it too, but the text becomes tiny
-# and wraps mid-phrase.
+# and wraps mid-phrase. At the current 700px a label line fits about 42
+# characters; write the lines to that budget and mermaid never has to break
+# a phrase itself.
 #
 # What works is reducing how many boxes sit on one rank: GUARD was lifted out
 # of AFTER, and ANALOG GENERATION was split in two. If this needs to shrink
