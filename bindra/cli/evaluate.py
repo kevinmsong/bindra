@@ -173,7 +173,7 @@ def _predict(model, loader, device, amp: bool = True):
     import torch
 
     truth, predicted, endpoint, exact, ids = [], [], [], [], []
-    lower, upper = [], []
+    lower, upper, primary = [], [], []
     with torch.no_grad():
         for batch in loader:
             batch = batch.to(device)
@@ -192,6 +192,7 @@ def _predict(model, loader, device, amp: bool = True):
             exact.append(batch.targets.is_exact.cpu().numpy())
             lower.append(batch.targets.lower_bound.float().cpu().numpy())
             upper.append(batch.targets.upper_bound.float().cpu().numpy())
+            primary.append(batch.targets.is_primary.cpu().numpy())
             ids.extend(batch.observation_ids)
     return {
         "predicted": np.concatenate(predicted),
@@ -200,6 +201,7 @@ def _predict(model, loader, device, amp: bool = True):
         "is_exact": np.concatenate(exact),
         "lower_bound": np.concatenate(lower),
         "upper_bound": np.concatenate(upper),
+        "is_primary": np.concatenate(primary),
         "observation_id": ids,
     }
 
@@ -267,6 +269,7 @@ def _metrics(
     lower_bound=None,
     upper_bound=None,
     targets=None,
+    is_primary=None,
     bootstrap: int = 0,
     bootstrap_seed: int = 20261010,
 ) -> dict:
@@ -281,6 +284,15 @@ def _metrics(
     reported as absent rather than silently omitted -- a reader cannot tell the
     difference between "not computed" and "nothing to report" unless the report
     says which.
+
+    ``is_primary`` adds a second headline computed the way the TRAINING LOOP
+    computes it. The two are different quantities and were being compared as
+    though they were one: ``AffinityOutput.exact_rmse`` is documented as "RMSE
+    over exact *primary* rows only", while this function's headline keeps
+    every exact row. On val for epoch 4 that is 186,923 rows against 181,178 --
+    5,745 auxiliary IC50 rows, all easier than average, worth 0.013 RMSE. Both
+    are now reported, because a benchmark that cannot be reconciled with the
+    training history invites exactly the wrong conclusion about which is real.
     """
     import numpy as np
     from scipy.stats import kendalltau, pearsonr, spearmanr
@@ -341,6 +353,30 @@ def _metrics(
             truth[keep], predicted[keep], "overall", rows=np.flatnonzero(keep)
         )
     }
+    if is_primary is not None:
+        strict = keep & is_primary.astype(bool)
+        section = {
+            "note": (
+                "exact AND primary rows only, which is the row set "
+                "AffinityOutput.exact_rmse uses, so this is the number "
+                "comparable to history.json"
+            ),
+            "n_exact_all": int(keep.sum()),
+            "n_exact_primary": int(strict.sum()),
+            "overall": block(
+                truth[strict], predicted[strict], "overall",
+                rows=np.flatnonzero(strict),
+            ),
+        }
+        for column, name in enumerate(ENDPOINT_ORDER):
+            mask = strict & (endpoint == column)
+            entry = block(
+                truth[mask], predicted[mask], name.value,
+                floors[name.value], rows=np.flatnonzero(mask),
+            )
+            if entry:
+                section[name.value] = entry
+        report["primary_only"] = section
     for column, name in enumerate(ENDPOINT_ORDER):
         mask = keep & (endpoint == column)
         entry = block(
@@ -417,6 +453,19 @@ def _render(title: str, report: dict) -> None:
             f"{intervals['n_resamples']:,} resamples"
         )
 
+    # The training history's number, beside this one, so the two are never
+    # mistaken for the same quantity again.
+    strict = report.get("primary_only") or {}
+    strict_overall = strict.get("overall")
+    if strict_overall:
+        dropped = strict.get("n_exact_all", 0) - strict.get("n_exact_primary", 0)
+        print(
+            f"  |   primary  n={strict_overall['n']:>8,}  "
+            f"RMSE {strict_overall['rmse']:.4f}"
+            f"{interval(strict_overall, 'rmse')}"
+            f"   ({dropped:,} auxiliary rows held out, as in training)"
+        )
+
     print(
         f"  |   {'endpoint':<8}{'n':>9}{'RMSE':>9}{'floor':>8}{'x floor':>9}"
         f"{'fold':>8}{'CI':>7}{'rho':>7}"
@@ -466,6 +515,7 @@ def _score_affinity_panel(name, directory, args, model, device, cache) -> dict:
         args.processed, queries, protein_cache=cache,
         length_multiple=BatchingPolicy().length_multiple,
         ligand_builder=getattr(args, "ligand_builder", None),
+        with_assay=getattr(args, "with_assay", False),
     )
     loader = PairLoader(
         dataset,
@@ -606,6 +656,7 @@ def cmd_evaluate(args) -> int:
             flush=True,
         )
     args.ligand_builder = builder
+    args.with_assay = config.assay_conditioning
 
     # -- partition ---------------------------------------------------------
     split_directory = Path(args.splits) / args.regime
@@ -622,6 +673,10 @@ def cmd_evaluate(args) -> int:
         limit=args.limit,
         ligand_builder=builder,
         cache_dir=args.dataset_cache or None,
+        # Read from the CHECKPOINT, not from a flag. A model that conditions
+        # on assay conditions cannot be scored on batches that carry none, and
+        # the caller should not have to remember which kind it has.
+        with_assay=config.assay_conditioning,
     )
     loader = PairLoader(
         dataset,
@@ -679,6 +734,7 @@ def cmd_evaluate(args) -> int:
         lower_bound=frozen["lower_bound"],
         upper_bound=frozen["upper_bound"],
         targets=targets,
+        is_primary=frozen["is_primary"],
         bootstrap=resamples,
         bootstrap_seed=args.bootstrap_seed,
     )
