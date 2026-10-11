@@ -206,6 +206,43 @@ def _predict(model, loader, device, amp: bool = True):
     }
 
 
+def _prediction_frame(dataset, frozen):
+    """Pair each prediction with the row that produced it.
+
+    THE IDS COME FROM THE BATCHES, NOT FROM THE FRAME.
+    ``length_bucketed_batches`` sorts within each shuffle window by sequence
+    length *even when shuffle is False*, so the loader never emits rows in
+    frame order. Zipping ``dataset.frame["observation_id"]`` against
+    loader-order predictions therefore attached every prediction to a
+    different molecule, and the later merge on ``observation_id`` scored a
+    permutation of the model's answers against the labels.
+
+    It failed silently, which is why it survived: the row count matched, the
+    id set matched, and every id appeared exactly once. Only the pairing was
+    wrong, and nothing downstream could see that. ``_row_grouping`` already
+    resolves in prediction order for the same reason; this path did not.
+    """
+    import pandas as pd
+
+    ids = list(frozen["observation_id"])
+    endpoint_by_id = dict(
+        zip(dataset.frame["observation_id"], dataset.frame["endpoint"])
+    )
+    missing = [i for i in ids if i not in endpoint_by_id]
+    if missing:
+        raise KeyError(
+            f"{len(missing):,} predicted rows are absent from the dataset "
+            f"frame, e.g. {missing[:3]}"
+        )
+    return pd.DataFrame(
+        {
+            "observation_id": ids,
+            "endpoint": [endpoint_by_id[i] for i in ids],
+            "predicted": frozen["predicted"],
+        }
+    )
+
+
 def _row_grouping(processed, dataset, observation_ids):
     """Protein component and construct id per predicted row.
 
@@ -527,13 +564,7 @@ def _score_affinity_panel(name, directory, args, model, device, cache) -> dict:
     frozen = _predict(model, loader, device, amp=not args.no_amp)
     loader.close()
 
-    predictions = pd.DataFrame(
-        {
-            "observation_id": dataset.frame["observation_id"].to_numpy(),
-            "endpoint": dataset.frame["endpoint"].to_numpy(),
-            "predicted": frozen["predicted"],
-        }
-    )
+    predictions = _prediction_frame(dataset, frozen)
     frozen_path = Path(args.out).parent / f"predictions_{name}.parquet"
     frozen_path.parent.mkdir(parents=True, exist_ok=True)
     predictions.to_parquet(frozen_path, index=False)

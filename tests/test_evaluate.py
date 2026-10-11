@@ -271,3 +271,60 @@ class TestRowGrouping:
         assert large < max(small * 25, 2.0), (
             f"10x the rows cost {large / small:.0f}x the time; this looks quadratic"
         )
+
+
+class TestPredictionPairing:
+    """Which row each prediction belongs to.
+
+    The loader sorts by sequence length inside every shuffle window, even with
+    ``shuffle=False`` (``length_bucketed_batches``), so its output order is not
+    the frame's. Pairing predictions with the frame's own id column therefore
+    scored a permutation: right row count, right id set, every id present once,
+    and every answer attached to the wrong molecule. Nothing downstream can
+    detect that, so it is asserted here.
+    """
+
+    def _dataset(self, n=64):
+        import types
+
+        import pandas as pd
+
+        frame = pd.DataFrame(
+            {
+                "observation_id": [f"o{i}" for i in range(n)],
+                "endpoint": ["Kd", "Ki", "IC50"] * (n // 3) + ["Kd"] * (n % 3),
+            }
+        )
+        return types.SimpleNamespace(frame=frame)
+
+    def test_it_pairs_by_batch_id_not_by_frame_position(self):
+        from bindra.cli.evaluate import _prediction_frame
+
+        dataset = self._dataset(64)
+        # The loader emitted the rows back to front: a permutation that shares
+        # the frame's id set exactly, which is what made the bug invisible.
+        order = [f"o{i}" for i in reversed(range(64))]
+        frozen = {
+            "observation_id": order,
+            # Prediction i encodes the index of the row it came from, so a
+            # wrong pairing is visible rather than merely different.
+            "predicted": np.array([float(i) for i in reversed(range(64))]),
+        }
+        out = _prediction_frame(dataset, frozen)
+
+        assert list(out["observation_id"]) == order
+        for row in out.itertuples(index=False):
+            assert row.observation_id == f"o{int(row.predicted)}"
+        expected = dict(zip(dataset.frame["observation_id"], dataset.frame["endpoint"]))
+        assert list(out["endpoint"]) == [expected[i] for i in order]
+
+    def test_an_unknown_id_refuses_rather_than_dropping_the_row(self):
+        from bindra.cli.evaluate import _prediction_frame
+
+        dataset = self._dataset(8)
+        frozen = {
+            "observation_id": ["o0", "o1", "ghost"],
+            "predicted": np.array([1.0, 2.0, 3.0]),
+        }
+        with pytest.raises(KeyError, match="absent from the dataset frame"):
+            _prediction_frame(dataset, frozen)
