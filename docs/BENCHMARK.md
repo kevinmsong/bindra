@@ -332,13 +332,36 @@ Two things worth holding onto:
   scoring at the reproducibility limit of the measurement, on a split that
   admits pair leakage, is a result to interrogate rather than to chase.
 
-### An aside the comparison turned up
+### A provenance bug the comparison turned up
 
-`best-e4.pt` records `ligand_encoder.checkpoint: "untrained"`,
-`from_scratch: true`, `weights_checksum: null`. The shipped model's ligand arm
-was **never pretrained**, despite `scripts/run_v2.ps1` passing
-`--ligand-checkpoint`. The architecture figure shows pre-training feeding
-initial weights into the LiGhT arm; for this checkpoint that edge is wrong.
+`best.pt` records `ligand_encoder.checkpoint: "untrained"`,
+`from_scratch: true`, `weights_checksum: null`. **That record is false**, and
+it was briefly believed here: the architecture figure was redrawn to remove
+the pre-training edge before anyone checked it against the weights.
+
+The weights say otherwise. Comparing the trained ligand arm with
+`pretrain-random_pair-v1` epoch 12 over the 1,141,480 parameters they share:
+
+| | cosine | relative L2 drift |
+|---|---|---|
+| trained arm vs pretrained | **0.9861** | 0.169 |
+| random re-init vs pretrained | -0.0055 | -- |
+
+The arm is pre-trained and five epochs of affinity training moved it 17%.
+
+The cause is an ordering bug in `bindra/cli/train.py`: `_ligand_metadata`
+reports the arm's identity into provenance at line ~356, and `--resume`
+replaces the weights at line ~409. A resume launched without
+`--ligand-checkpoint` therefore records a freshly built arm -- "untrained" --
+and then loads pre-trained-descended weights over it. The two Oct 10 runs
+that created `runs/random_pair-v2` both logged `ligand arm initialised from
+best.pt@72d80177 (pretrain epoch 12)`; the later resumes overwrote that record
+without overwriting the weights it described.
+
+Fixed: a resume with no `--ligand-checkpoint` of its own now inherits the
+resumed checkpoint's `ligand_encoder` provenance and says so in the log.
+Checkpoints written before the fix -- `best.pt` and `best-e4.pt` among them --
+still carry the wrong field, so trust the weights over the record for those.
 
 ## Two defects found while producing these numbers
 

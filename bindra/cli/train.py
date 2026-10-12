@@ -410,6 +410,40 @@ def cmd_fit(args) -> int:
         trainer.load_checkpoint(Path(args.resume))
         print(f"[{OK}] resumed from {args.resume} at epoch {trainer.epoch}", flush=True)
 
+        # INHERIT THE RESUMED RUN'S LIGAND IDENTITY.
+        # `_ligand_metadata` ran at line ~356, before this, and reported
+        # whatever the freshly built arm looked like -- "untrained" whenever
+        # this invocation was not itself given --ligand-checkpoint. Then
+        # load_checkpoint replaced those weights with the resumed ones. So a
+        # resume launched without the flag recorded `checkpoint: untrained,
+        # from_scratch: true` for an arm whose weights descend from a
+        # pre-trained one, and every artifact downstream repeated it.
+        #
+        # Measured on runs/random_pair-v2/best.pt, which carried exactly this
+        # wrong record: cosine similarity to pretrain-random_pair-v1 epoch 12
+        # is 0.9861 over 1,141,480 parameters, against -0.0055 for a random
+        # re-initialisation. The weights were pre-trained; the provenance
+        # denied it, and a figure was redrawn on the strength of the denial.
+        #
+        # The resumed checkpoint's own record is the true one when this run
+        # did not load an arm itself, so adopt it.
+        if not args.ligand_checkpoint:
+            import torch as _torch
+
+            resumed = _torch.load(
+                Path(args.resume), map_location="cpu", weights_only=False
+            )
+            inherited = (resumed.get("provenance") or {}).get("ligand_encoder")
+            if inherited:
+                provenance["ligand_encoder"] = inherited
+                trainer.provenance = provenance
+                identity = inherited.get("checkpoint", "unknown")
+                print(
+                    f"[{OK}] ligand arm identity inherited from the resumed "
+                    f"checkpoint: {identity}",
+                    flush=True,
+                )
+
     print(f"[{INFO}] noise floor (RMSE at which a model is not skilful): {noise_floor_table()}")
     print(f"[{INFO}] writing to {run_directory}", flush=True)
     trainer.fit(train_loader, val_loader)
