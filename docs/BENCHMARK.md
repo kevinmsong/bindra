@@ -26,9 +26,21 @@ Not scored, deliberately:
   `uncertainty/ensemble.py:assert_independent` refuses three passes over one
   model by design, so that number does not exist and is not implied here.
 
-Training stopped at a budget, not at a plateau: val RMSE fell on every one of
-the five epochs (1.3128, 1.2405, 1.1918, 1.1578, 1.1343). This model was still
-improving when it stopped.
+Val RMSE fell on every one of the five epochs: 1.3128, 1.2405, 1.1918,
+1.1578, **1.1343**. A sixth was run afterwards to find out whether the budget
+or the model had been the limit, and it answered the question: **epoch 5
+scored 1.1444, worse than epoch 4 by 0.0101.** Epoch 4 is therefore a measured
+optimum rather than an arbitrary stopping point, and it is the final model.
+
+The regression is not uniform, which is worth knowing before reading epoch 4
+as simply "best". Epoch 5 improved Kd (1.3471 to 1.3239), Ki (1.1807 to
+1.1791), the censored bound-violation rate (0.494 to 0.461) and the total loss
+(0.913 to 0.868). It lost only on IC50 (1.1083 to 1.1245) -- which is 71% of
+the val rows and so decides the pooled figure. The model was rebalancing
+toward the smaller endpoints and the censored term, and the selection metric,
+being pooled RMSE, charged it for that. One epoch cannot separate overfitting
+on IC50 from a multi-task trade; it does establish that pooled val RMSE had
+stopped falling.
 
 ## Headline
 
@@ -111,7 +123,9 @@ excludes them; these are them.
 Half of censored predictions land on the wrong side of their bound, but the
 miss when it happens is 0.367 log units -- below every endpoint's noise floor.
 These are threshold near-misses, not wild predictions. The violation rate fell
-from 0.717 to 0.494 over the five epochs, so it was still improving too.
+from 0.717 to 0.494 over the five epochs, and fell further to 0.461 at epoch
+5 -- one of the measures that kept improving after the selection metric
+turned.
 
 ## Calibration
 
@@ -352,7 +366,10 @@ never been run, so no previously reported number is affected.
 
 - **One seed.** No seed-to-seed variation is measured, no ensemble exists, and
   no per-prediction uncertainty is available.
-- **Five epochs, still improving.** This is not a converged model.
+- **Five epochs.** Epoch 5 was run and regressed (1.1444), so this is the best
+  of six on pooled val RMSE rather than a model cut short. It is not
+  *converged* -- Kd, Ki and the censored term were all still improving at
+  epoch 5 -- but the headline metric had turned.
 - **`random_pair` measures interpolation.** Both the molecule and the target are
   usually represented in training. It says nothing about a new target or a
   future time period; the cold-target and time-based regimes exist for that and
