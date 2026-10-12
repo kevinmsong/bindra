@@ -303,6 +303,7 @@ class KPGTLigandArmModule(nn.Module):
         *,
         regime: str | None = None,
         split_id: str | None = None,
+        allow_unrestricted: bool = False,
     ) -> str:
         """Load pretrained LiGhT weights -- ours from ``bindra pretrain``, or ``base.pth``.
 
@@ -319,8 +320,16 @@ class KPGTLigandArmModule(nn.Module):
         regime: a different ``split_id`` is a different train set. Either
         mismatch is refused here rather than warned about, because the run it
         would produce looks entirely normal and its held-out numbers would be
-        quietly inflated. The fix is to pretrain again for the split in hand;
-        there is no flag to proceed, on purpose.
+        quietly inflated. The fix is to pretrain again for the split in hand.
+
+        ``allow_unrestricted`` is the one way past, added for benchmarking
+        against published models that pretrain on unlabeled corpora without
+        excluding their own test molecules. It does not make the leak safe --
+        it makes it *stated*: the mismatch is printed, and the returned
+        identity string carries UNRESTRICTED so it appears in the affinity
+        checkpoint's provenance and in anything rendered from it. A number
+        produced this way is inflated by an unmeasured amount and must be
+        reported as such.
 
         Returns the identity string recorded in provenance.
         """
@@ -358,8 +367,36 @@ class KPGTLigandArmModule(nn.Module):
             )
 
         provenance = dict(payload.get("provenance") or {})
+        scope = provenance.get("molecule_scope")
+        unrestricted = scope == "all_partitions"
         stored_regime = provenance.get("split_regime")
-        if regime is not None and stored_regime is not None and stored_regime != regime:
+        mismatched = (
+            regime is not None
+            and stored_regime is not None
+            and stored_regime != regime
+        )
+        if (unrestricted or mismatched) and allow_unrestricted:
+            reason = (
+                "pretrained on ALL corpus molecules, held-out ones included"
+                if unrestricted
+                else f"pretrained for {stored_regime!r}, loading into {regime!r}"
+            )
+            print(
+                f"[ WARN  ] {path.name}: {reason}. Structure from this run's "
+                "evaluation molecules is inside the encoder. Every held-out "
+                "number that follows is inflated by an unmeasured amount.",
+                flush=True,
+            )
+            self.module.load_state_dict(payload["model_state_dict"], strict=True)
+            self.apply_freezing()
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+            self.pretrained_checkpoint = (
+                f"UNRESTRICTED:{path.name}@{digest}"
+                + (f" (pretrain epoch {payload.get('epoch')})"
+                   if payload.get("epoch") is not None else "")
+            )
+            return self.pretrained_checkpoint
+        if mismatched:
             raise LigandArmError(
                 f"{path.name} was pretrained on the {stored_regime!r} split and this "
                 f"run trains on {regime!r}. The two hold out different molecules, so "

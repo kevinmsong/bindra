@@ -312,6 +312,7 @@ def cmd_fit(args) -> int:
                 Path(args.ligand_checkpoint),
                 regime=manifest["regime"],
                 split_id=manifest["split_id"],
+                allow_unrestricted=args.allow_unrestricted_ligand_checkpoint,
             )
         except LigandArmError as exc:
             print(f"[{FAIL}] {exc}", flush=True)
@@ -546,6 +547,16 @@ def build_parser():
              "labels but it does leak structure, so an encoder pretrained against "
              "another split has already seen molecules this one evaluates on. A "
              "published base.pth is accepted here too and loaded strictly.",
+    )
+    parser.add_argument(
+        "--allow-unrestricted-ligand-checkpoint", action="store_true",
+        help="OFF-SPEC. Accept a ligand checkpoint pretrained on molecules "
+             "this split holds out -- either one built with `bindra pretrain "
+             "--all-molecules` or one from another regime. Pre-training leaks "
+             "no labels but it does leak structure, so the held-out numbers "
+             "that follow are inflated by an unmeasured amount. The run's "
+             "provenance records the encoder identity with an UNRESTRICTED "
+             "prefix so the inflation travels with the artifact.",
     )
     parser.add_argument(
         "--ranking-weight", type=float, default=0.0,

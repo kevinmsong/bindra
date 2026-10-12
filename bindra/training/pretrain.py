@@ -207,6 +207,29 @@ class PretrainLoss:
     fingerprint_baseline: float = 0.0
 
 
+def all_corpus_molecules(processed: Path | str) -> list[str]:
+    """Every standardized molecule in the corpus, held-out ones included.
+
+    This deliberately breaks the rule :func:`train_only_molecules` enforces.
+    It exists so BINDRA can be compared against published models that pretrain
+    on unlabeled corpora without excluding their own test molecules; using it
+    for anything else makes the held-out numbers meaningless, which is why the
+    caller has to ask for it by name and the scope is recorded in the
+    checkpoint.
+    """
+    import pandas as pd
+
+    processed = Path(processed)
+    frames = [
+        pd.read_parquet(path, columns=["standardized_smiles", "status"])
+        for path in sorted((processed / "ligands").glob("*.parquet"))
+    ]
+    ligands = pd.concat(frames, ignore_index=True)
+    ligands = ligands[ligands["status"] == "OK"]
+    smiles = ligands["standardized_smiles"].dropna().astype(str)
+    return list(dict.fromkeys(smiles))
+
+
 def train_only_molecules(
     processed: Path | str,
     splits: Path | str,

@@ -155,10 +155,42 @@ def cmd_pretrain(args) -> int:
     print(f"[{OK}] device {describe_device(device)}", flush=True)
 
     provenance = _split_provenance(processed, split_directory)
-    molecules = _molecules(
-        run_directory, processed, splits, args.regime,
-        provenance["split_id"], refresh=args.refresh_molecules,
-    )
+    if args.all_molecules:
+        # OFF-SPEC, ON PURPOSE, AND RECORDED. The module docstring above states
+        # the rule this breaks: only training partitions may supply chemistry
+        # pre-training, because self-supervision leaks structure even though it
+        # leaks no labels. Pre-training on every molecule puts the graphs of
+        # held-out molecules inside the encoder, and the affinity numbers that
+        # follow are inflated by an unknown amount.
+        #
+        # It exists because the published baselines this is being compared
+        # against (SSM-DTA, kNN-DTA) pretrain on unlabeled corpora with no
+        # test exclusion, so a restricted BINDRA is handicapped on the axis
+        # those methods are built around. The scope is written into the
+        # checkpoint so every artifact downstream carries the disclosure
+        # rather than looking clean.
+        from bindra.training.pretrain import all_corpus_molecules
+
+        molecules = all_corpus_molecules(processed)
+        provenance["molecule_scope"] = "all_partitions"
+        provenance["molecule_scope_warning"] = (
+            "Pretrained on every molecule in the corpus, including those in "
+            "val, cal, test and quarantine. Structure leaked; labels did not. "
+            "Any held-out number from a model using this encoder is inflated."
+        )
+        print(
+            f"[{FAIL}] --all-molecules: pre-training on ALL {len(molecules):,} "
+            "corpus molecules, including held-out ones. This is off-spec. The "
+            "encoder will have seen structures the affinity split evaluates "
+            "on, and the scope is recorded in the checkpoint.",
+            flush=True,
+        )
+    else:
+        provenance["molecule_scope"] = "train_only"
+        molecules = _molecules(
+            run_directory, processed, splits, args.regime,
+            provenance["split_id"], refresh=args.refresh_molecules,
+        )
     if args.limit:
         molecules = molecules[: args.limit]
         print(f"[{INFO}] limited to {len(molecules):,} molecules", flush=True)
@@ -209,10 +241,23 @@ def cmd_pretrain(args) -> int:
     train_smiles, val_smiles = split_molecules(
         molecules, val_fraction=config.val_fraction, seed=config.seed
     )
+    # The provenance of the held-back slice differs by mode, and saying the
+    # wrong one is worse than saying nothing: under --all-molecules the pool is
+    # every partition, so the selection slice is NOT train-only and the usual
+    # reassurance would be false.
+    if args.all_molecules:
+        selection_note = (
+            "The held-back slice is drawn from ALL molecules, held-out ones "
+            "included, so it does not certify anything about leakage."
+        )
+    else:
+        selection_note = (
+            "The held-back slice comes from train, never from the affinity "
+            "split's val partition."
+        )
     print(
         f"[{OK}] {len(train_smiles):,} molecules to pretrain on, "
-        f"{len(val_smiles):,} held back to select a checkpoint. The held-back "
-        "slice comes from train, never from the affinity split's val partition.",
+        f"{len(val_smiles):,} held back to select a checkpoint. {selection_note}",
         flush=True,
     )
 
@@ -318,6 +363,17 @@ def build_parser():
              "hold out different molecules.",
     )
     parser.add_argument("--tag", default="")
+    parser.add_argument(
+        "--all-molecules", action="store_true",
+        help="OFF-SPEC. Pretrain on every molecule in the corpus rather than "
+             "only the regime's train-only ones. Self-supervision leaks no "
+             "labels but it does leak structure, so this puts held-out "
+             "molecules' graphs inside the encoder and inflates every later "
+             "held-out number by an unmeasured amount. The scope is written "
+             "into the checkpoint, and `bindra train` refuses such a "
+             "checkpoint unless passed "
+             "--allow-unrestricted-ligand-checkpoint.",
+    )
     parser.add_argument("--device", default=None)
     parser.add_argument(
         "--epochs", type=int, default=30,
