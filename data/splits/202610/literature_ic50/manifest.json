@@ -1,0 +1,89 @@
+{
+  "audit": {
+    "all_gating_checks_passed": true,
+    "checks": [
+      {
+        "check": "set_algebra",
+        "gating": true,
+        "n_checked": 376751,
+        "n_violations": 0,
+        "passed": true
+      }
+    ],
+    "pair_leakage_admitted_by_this_protocol": {
+      "test": {
+        "n_rows": 113025,
+        "n_rows_whose_pair_is_also_in_train": 10938,
+        "share": 0.0967750497677505
+      },
+      "val": {
+        "n_rows": 37675,
+        "n_rows_whose_pair_is_also_in_train": 3729,
+        "share": 0.09897810218978102
+      }
+    }
+  },
+  "counts": {
+    "test": {
+      "n_observations": 113025,
+      "n_pairs": 109351,
+      "n_targets": 2758
+    },
+    "train": {
+      "n_observations": 226051,
+      "n_pairs": 213529,
+      "n_targets": 2782
+    },
+    "val": {
+      "n_observations": 37675,
+      "n_pairs": 37130,
+      "n_targets": 2481
+    }
+  },
+  "created_at": "2026-10-11T15:04:20.913214+00:00",
+  "fractions": {
+    "test": 0.3,
+    "train": 0.6,
+    "val": 0.1
+  },
+  "id_files": {
+    "test": {
+      "n": 113025,
+      "path": "test.txt.gz",
+      "sha256": "db4c8ef41a88d6382152852ffeab7bea80a482ab817aed23adb87a1dbc9fc74c"
+    },
+    "train": {
+      "n": 226051,
+      "path": "train.txt.gz",
+      "sha256": "cdac6737b10e01c4874284f96f2cf1c8a5cba03f5eedb9d155a8952130b7873e"
+    },
+    "val": {
+      "n": 37675,
+      "path": "val.txt.gz",
+      "sha256": "fc9ae79bedd0a686aa12b93372dd64d52fc7c8ec801f5696e25cfa6dd953e24e"
+    }
+  },
+  "inputs": {
+    "endpoint": "IC50",
+    "exact_only": true,
+    "n_targets_kept": 2782,
+    "observations_combined_sha256": "4f9a41d373ccb1326c453e4424c41cb4407fd16617e9d0b4a6fa8eb9b4c60e94",
+    "primary_only": true,
+    "sample_size_source": "SSM-DTA reports 376,751 IC50 measurements",
+    "smallest_kept_target_measurements": 33,
+    "target_set_size_source": "SSM-DTA reports 2,782 targets for BindingDB IC50"
+  },
+  "manifest_sha256": "3976d4e6aaf3b7dc1eafa77014e83523700f6c39d1e6df3799afe65c2338ff1b",
+  "policy": {
+    "assignment": "uniform_random_over_measurements",
+    "note": "Deliberately NOT pair-disjoint. This reproduces the published BindingDB protocol (random 6:1:3 over measurements) so one BINDRA number exists on the literature's terms. BINDRA's own random_pair split enforces pair integrity and is the honest regime.",
+    "pair_integrity": false
+  },
+  "quarantine": {
+    "n_observations": 0
+  },
+  "regime": "literature_ic50",
+  "schema_version": "split-v1",
+  "seed": 20261011,
+  "split_id": "literature_ic50-20261011"
+}

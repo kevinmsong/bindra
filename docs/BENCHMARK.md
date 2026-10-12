@@ -210,6 +210,122 @@ weak. On a dataset whose label is a different quantity on a different scale, the
 model retains rank information but much less than it holds in-domain (CI 0.592
 against 0.757).
 
+## Against published BindingDB models
+
+The headline above cannot be compared to the DTA literature as it stands,
+because BINDRA does not measure itself the way those papers measure
+themselves. So the protocol was reproduced and BINDRA retrained inside it,
+to put one number on the literature's own terms.
+
+### The protocol, reproduced
+
+`data/splits/202610/literature_ic50/` rebuilds the DeepAffinity-lineage setup
+that MONN, BACPI, SSM-DTA and kNN-DTA all report on:
+
+| | SSM-DTA reports | reproduction |
+|---|---|---|
+| Measurements | 376,751 | 376,751 |
+| Targets | 2,782 | 2,782 |
+| Endpoint | IC50 | IC50 only, exact only, primary only |
+| Split | random 6:1:3 over measurements | random 60/10/30 over measurements |
+| train / val / test | not stated | 226,051 / 37,675 / 113,025 |
+
+Filtering the corpus to IC50 + exact + primary leaves 1,564,121 rows over
+6,946 targets; the top 2,782 targets by count hold 1,529,059 of them,
+subsampled to 376,751. The smallest kept target has 33 measurements, so
+everything thinner than that is the tail this benchmark never sees.
+
+This is an approximation of the published setup, not a reproduction of it.
+DeepAffinity's exact filtration is not documented in enough detail to rerun
+and the BindingDB release differs. What is reproduced is the shape.
+
+### What the protocol gives away, measured
+
+A random split over *measurements* makes no promise about pairs. BINDRA's own
+`random_pair` is audited pair-disjoint -- 0 violations across 1,858,413 pairs
+-- and this one is not:
+
+| | rows | sharing a pair with train |
+|---|---|---|
+| val | 37,675 | 3,729 (9.9%) |
+| test | 113,025 | 10,938 (9.7%) |
+
+So about one test row in ten is partly a lookup rather than a prediction.
+Recorded in the split manifest under
+`audit.pair_leakage_admitted_by_this_protocol`.
+
+### The run
+
+Trained from scratch under that split with e4's exact architecture and
+hyperparameters -- 2,590,851 parameters, model-dim 160, two fusion layers,
+two pool heads, FiLM bottleneck 128, assay conditioning, ranking weight 0.1,
+lr 1e-4, 20 epochs, patience 5.
+
+Two deliberate departures, both favouring BINDRA and both disclosed:
+
+- **Unrestricted pre-training.** The ligand arm was pretrained on all
+  1,404,819 corpus molecules -- held-out ones included -- to 0.1726 held-out
+  loss over 10 epochs. This breaks the project's own rule that only training
+  partitions may supply chemistry pre-training, because the baselines being
+  compared against pretrain on unlabeled corpora without excluding their test
+  molecules, and a restricted BINDRA would be handicapped on the axis those
+  methods are built around. It leaks structure, not labels. The checkpoint
+  records `molecule_scope: all_partitions` and the affinity run's provenance
+  carries the encoder identity as `UNRESTRICTED:...`, so the inflation travels
+  with the artifact.
+- **The 9.7% pair leak above**, inherent to the protocol.
+
+Val RMSE fell on all twenty epochs, 1.3064 to 0.9918; patience never fired.
+
+### The comparison
+
+| Model | IC50 RMSE | Pearson |
+|---|---|---|
+| kNN-DTA | **0.684** | -- |
+| SSM-DTA | 0.712 | **0.878** |
+| BACPI | 0.740 | 0.860 |
+| MONN | 0.764 | 0.858 |
+| DeepAffinity | 0.780 | 0.840 |
+| DeepDTA | 0.782 | 0.848 |
+| Random Forest baseline | 0.910 | 0.780 |
+| **BINDRA, this protocol** | **0.9822** [0.960, 1.003] | **0.7212** [0.705, 0.736] |
+| BINDRA, `random_pair` IC50 (harder) | 1.0909 | 0.7106 |
+
+113,025 test rows, 1,555 protein components, 1,000 resamples.
+Also: MAE 0.7402, CI 0.7657, Spearman 0.7141, AUROC 0.8499, AUPRC 0.8239
+against a 0.461 base rate, calibration slope 0.8909 with mean absolute bias
+0.1119.
+
+**Matching the protocol does not close the gap.** It moved BINDRA from 1.0909
+to 0.9822, a real 0.109, but the model still lands short of the Random Forest
+baseline and 0.30 behind the best published result. Roughly a third of the
+original 0.42 discrepancy was protocol; the rest is the model. And 0.9822 is
+the generous figure, since it carries both the pair leak and an encoder that
+has seen the test set's structures.
+
+What transfers is **rank, not magnitude**: CI 0.766 and AUROC 0.850 are close
+to the in-domain figures, while calibration is markedly better here than on
+`random_pair` (slope 0.891 against 0.763). BINDRA orders compounds
+competently and predicts absolute potency poorly.
+
+Two things worth holding onto:
+
+- **The model, not the schedule, is the limit.** Twenty epochs, improving on
+  every one, ending with a 0.0003 gain. It did not run out of training; it ran
+  out of capacity. 2.59M trainable parameters with a frozen protein encoder,
+  against pretrained transformer stacks.
+- **kNN-DTA's 0.684 is at the IC50 replicate-noise floor of 0.671.** A model
+  scoring at the reproducibility limit of the measurement, on a split that
+  admits pair leakage, is a result to interrogate rather than to chase.
+
+### An aside the comparison turned up
+
+`best-e4.pt` records `ligand_encoder.checkpoint: "untrained"`,
+`from_scratch: true`, `weights_checksum: null`. The shipped model's ligand arm
+was **never pretrained**, despite `scripts/run_v2.ps1` passing
+`--ligand-checkpoint`. The architecture figure shows pre-training feeding
+initial weights into the LiGhT arm; for this checkpoint that edge is wrong.
+
 ## Two defects found while producing these numbers
 
 Both were found by cross-checks, not by the code failing.
@@ -247,3 +363,7 @@ never been run, so no previously reported number is affected.
   Do not use this model to rule a compound out.
 - **The external numbers are zero-shot**, and Davis's clean stratum is 3,461
   rows with correspondingly wide intervals.
+- **The literature-protocol number is off-spec twice over** -- a 9.7% pair
+  leak and an encoder pretrained on held-out structures -- and is reported
+  only to compare like with like. It is not a BINDRA result; 1.1342 on
+  `random_pair` is.
