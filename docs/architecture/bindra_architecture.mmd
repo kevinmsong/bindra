@@ -35,6 +35,12 @@ flowchart TB
 %% most one line of why. The reasoning lives in the module docstrings, which
 %% can hold a paragraph without costing a page. Page width is fixed by the
 %% renderer, so height is words: a label that grows shrinks the type.
+%% PRE IS GREY AND HAS NO ARROW because the trained model does not use it.
+%%   run_v2.ps1 passes --ligand-checkpoint, but best-e4.pt records
+%%   ligand_encoder.checkpoint "untrained" and from_scratch true, so the
+%%   pretrained weights were never loaded. The figure drew an edge that the
+%%   checkpoint contradicts; a diagram that disagrees with the artifact is
+%%   worse than one that omits the stage.
 %% EVERY LABEL LINE IS WRITTEN TO FIT, about 42 characters at wrappingWidth
 %% 700. Leave a line longer and mermaid breaks it wherever it lands, which
 %% is how "plus *two* / masks" and "103,044 · 960 / numbers" happened.
@@ -73,9 +79,11 @@ Three parts, never blended.`"]
     KFEAT --> KLIGHT --> KREAD
   end
 
-  PRE["`**Pre-training** · done
-540,166 training-only molecules.
-Held-out loss **0.2002**.`"]
+  PRE["`**Pre-training** · run, NOT used
+540,166 molecules, held-out loss 0.2002.
+The trained model's ligand arm is
+**from scratch**: checkpoint records
+from_scratch true, no weights loaded.`"]
 end
 
 SEAM["`**The seam** · one vector per bond
@@ -186,7 +194,6 @@ Scaffold checked by **atom mapping**.
 Validity before *and* after sanitizing.`"]
 end
 
-PRE -.->|"initial weights"| KLIGHT
 CACHE --> AP
 KLIGHT --> SEAM
 KREAD --> SEAM
@@ -220,10 +227,10 @@ classDef planned fill:#F0E4F3,stroke:#CC79A7,stroke-width:2px,stroke-dasharray:6
 classDef note fill:#F2F2F2,stroke:#767676,stroke-width:1px,color:#333333
 
 class ESMC,CACHE,K1 frozen
-class KFEAT,KLIGHT,KREAD,PRE,TRAIN,AP,AL,AG,P2L,L2P,POOL,HKD,HKI,HIC,UDOM,K2 trained
+class KFEAT,KLIGHT,KREAD,TRAIN,AP,AL,AG,P2L,L2P,POOL,HKD,HKI,HIC,UDOM,K2 trained
 class SEAM,K3 seam
 class FILM,ASSAY,K4 conditioning
 class GATHER,LOCK,K5 gate
 class LEX,LCEN,LAUX,LRANK,K6 lossbox
 class DCOND,DDEN,DDEC,UENS,UCONF,K7 planned
-class NOTE,IBAM,FISHING note
+class NOTE,IBAM,FISHING,PRE note
