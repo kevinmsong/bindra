@@ -1,0 +1,14 @@
+\begin{table}[htbp]\centering\begin{singlespace}\small\setlength{\tabcolsep}{3pt}\renewcommand{\arraystretch}{1.3}
+\caption{Single-model variation and ensemble prediction uncertainty}
+\begin{tabular}{>{\raggedright\arraybackslash}p{0.14400000000000002\linewidth}>{\raggedright\arraybackslash}p{0.12600000000000003\linewidth}>{\raggedright\arraybackslash}p{0.06300000000000001\linewidth}>{\raggedright\arraybackslash}p{0.162\linewidth}>{\raggedright\arraybackslash}p{0.198\linewidth}>{\raggedright\arraybackslash}p{0.20700000000000002\linewidth}}
+\toprule
+\textbf{Model} & \textbf{Protocol} & \textbf{N} & \textbf{Single MSE mean (SD)} & \textbf{Ensemble MSE [95\% interval]} & \textbf{Ensemble CI [95\% interval]}\\\midrule
+BINDRA & warm & 5010 & 0.2156 (0.0041) & 0.1966 [0.1462, 0.2552] & 0.9080 [0.8904, 0.9237]\\
+BINDRA-iBAM & warm & 5010 & 0.2268 (0.0037) & 0.1959 [0.1456, 0.2579] & 0.9125 [0.8957, 0.9274]\\
+BINDRA & cold-drug & 2652 & 0.5252 (0.0280) & 0.5038 [0.2970, 0.7778] & 0.7148 [0.6139, 0.8026]\\
+BINDRA-iBAM & cold-drug & 2652 & 0.6510 (0.0332) & 0.6360 [0.3430, 1.1367] & 0.7243 [0.6007, 0.8138]\\
+BINDRA & cold-protein & 2992 & 0.3030 (0.0064) & 0.2792 [0.1897, 0.3756] & 0.8453 [0.8053, 0.8804]\\
+BINDRA-iBAM & cold-protein & 2992 & 0.2629 (0.0169) & 0.2258 [0.1520, 0.3117] & 0.8719 [0.8347, 0.9044]\\
+\bottomrule\end{tabular}\par\vspace{6pt}
+{\raggedright\footnotesize Three models per row. SD describes seeds; bracketed intervals describe ensemble sampling uncertainty from 1000 crossed sequence/Murcko resamples. MSE uses squared pKd units. CI is unitless. Warm: 379 sequence/68 chemical groups; cold-drug: 379/6; cold-protein: 44/68. Few chemical groups limit cold-drug precision. Historical test exposure remains disclosed.\par}
+\end{singlespace}\end{table}

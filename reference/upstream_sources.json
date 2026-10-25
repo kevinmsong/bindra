@@ -1,0 +1,17 @@
+{
+  "graphdta_gin": {
+    "repository": "thinng/GraphDTA",
+    "revision": "6162245c6776684b391d30610850fe7077478435",
+    "files": {
+      "models/ginconv.py": "6bac0ca17e7185468a824646b2a658d21124264beb203b192e1a40abcb679c9d"
+    }
+  },
+  "mgraphdta": {
+    "repository": "guaguabujianle/MGraphDTA",
+    "revision": "54386680e8c9562f708a0fe5d381038c62111df6",
+    "files": {
+      "regression/model.py": "683bbd043a047226a96274c23e8f8d823fd1aee3b81f227c15acb2b7dbbef5ed",
+      "regression/preprocessing.py": "35175f45a1e19de203375a7f85b011965b2e7c792b58c3f9dc91362bd11991b1"
+    }
+  }
+}

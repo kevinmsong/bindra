@@ -1,0 +1,27 @@
+{
+  "complete": true,
+  "pairs_sha256": "748e3057d29964ec7a8905090282bbf5db5f500d184894d981bb3c6bafa829b9",
+  "molecules_sha256": "a0005ced247da8de4eb43a5a02375705306a95533ea85f9dc4ce1734f407576e",
+  "corpus_sha256": "3f647811df05e77a72c9b3708ccec537ca260007c64cffab905639beb16de747",
+  "reference_sha256": "f427cc1cf5dc1cb466a49090f5be1596281af6f0c31039ba32f7c2269fad57ce",
+  "pretraining_molecules": 649364,
+  "molecules": 2068,
+  "unresolved_chemical_normalizations": 1,
+  "counts": {
+    "ligand_pretraining_identity": {
+      "False": 2067,
+      "None": 1
+    },
+    "ligand_pretraining_parent": {
+      "False": 2067,
+      "None": 1
+    },
+    "ligand_pretraining_scaffold": {
+      "False": 2067,
+      "None": 1
+    }
+  },
+  "protein_pretraining": "Historical ESM-C exposure unknown; no chemically clean stratum implies unseen protein pretraining.",
+  "supervised_scope": "Davis official full supervised training pool; test observations excluded from supervised-pair reference.",
+  "unknowns": "Unresolved normalization is not classified as unexposed."
+}

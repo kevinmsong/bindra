@@ -1,0 +1,165 @@
+{
+  "protocol_sha256": "9c867cf868f455310f772d275fd6d5938b15f87f316028e956029db176a074c5",
+  "frozen_at": "2026-10-25T02:57:32.613562+00:00",
+  "policy": {
+    "schema": "bindra-independent-kiba-v1",
+    "dataset": "kiba",
+    "label_scale": "KIBA_score",
+    "source": "hkmztrk/DeepDTA official setting1 files",
+    "primary_selection": "mean validation MSE across official training folds 0, 1, and 2",
+    "validation_folds": [
+      0,
+      1,
+      2
+    ],
+    "tuning_seed": 20261001,
+    "final_seeds": [
+      20261001,
+      20261002,
+      20261003
+    ],
+    "neural_models": [
+      "bindra_pooled",
+      "bindra_attention",
+      "graphdta_gin",
+      "mgraphdta"
+    ],
+    "classical_models": [
+      "ridge",
+      "random_forest"
+    ],
+    "neural_grid": [
+      {
+        "learning_rate": 0.0001,
+        "dropout": 0.1
+      },
+      {
+        "learning_rate": 0.0001,
+        "dropout": 0.2
+      },
+      {
+        "learning_rate": 0.0003,
+        "dropout": 0.1
+      },
+      {
+        "learning_rate": 0.0003,
+        "dropout": 0.2
+      },
+      {
+        "learning_rate": 0.001,
+        "dropout": 0.1
+      },
+      {
+        "learning_rate": 0.001,
+        "dropout": 0.2
+      }
+    ],
+    "ridge_alphas": [
+      1,
+      10,
+      100,
+      1000,
+      10000,
+      100000
+    ],
+    "forest_grid": [
+      {
+        "n_estimators": 128,
+        "max_depth": 16,
+        "min_samples_leaf": 1,
+        "max_features": 0.1
+      },
+      {
+        "n_estimators": 128,
+        "max_depth": 24,
+        "min_samples_leaf": 1,
+        "max_features": 0.1
+      },
+      {
+        "n_estimators": 128,
+        "max_depth": null,
+        "min_samples_leaf": 1,
+        "max_features": 0.1
+      },
+      {
+        "n_estimators": 128,
+        "max_depth": 16,
+        "min_samples_leaf": 3,
+        "max_features": 0.1
+      },
+      {
+        "n_estimators": 128,
+        "max_depth": 24,
+        "min_samples_leaf": 3,
+        "max_features": 0.1
+      },
+      {
+        "n_estimators": 128,
+        "max_depth": null,
+        "min_samples_leaf": 3,
+        "max_features": 0.1
+      }
+    ],
+    "max_epochs": 200,
+    "patience": 15,
+    "effective_batch": 128,
+    "physical_batch": 32,
+    "weight_decay": 0.01,
+    "protein_input_cap": 1000,
+    "input_comparability": "Same SMILES, first 1000 residues, rows and partitions. Architectures retain their own molecular encodings; external encoder pretraining is a separate resource difference.",
+    "encoders": "BINDRA uses original frozen ESM-C 600M and five-epoch LiGhT; fresh supervised weights. Baselines initialize from scratch.",
+    "ligand_checkpoint_sha256": "97f71a955dc658a4d33c6e931cdd8f7e4f5fe69f8db748224f67b202f41e7630",
+    "protein_weights_sha256": "7855e03269e5241e11bbb879108b888ffe10e625c730272eff80f99bf7cb8538",
+    "test_gate": "No test predictions or metrics until all model selections, durations and exposure audit are frozen. No change to the protocol after seeing test metrics.",
+    "exposure_strata": [
+      "ligand pretraining exposed",
+      "ligand pretraining unexposed",
+      "Davis supervised pair exposed",
+      "Davis supervised pair unexposed"
+    ],
+    "reporting": "Per-seed metrics and equal-weight three-seed prediction ensembles separately; deterministic ridge once. Do not compare KIBA magnitudes with pKd.",
+    "davis_fold_stability": {
+      "additional_folds": [
+        1,
+        2
+      ],
+      "arms": [
+        "A",
+        "B",
+        "C",
+        "D",
+        "E",
+        "F",
+        "G",
+        "C-matched"
+      ],
+      "seeds": [
+        20261001,
+        20261002,
+        20261003
+      ],
+      "selection_scope": "Repeat all six tuning configurations per arm and fold with tuning seed 20261001; replicate each chosen configuration with seeds 20261002 and 20261003. Mean three-seed validation MSE selects the architecture within each fold. Original full-sequence frozen features; no test scoring.",
+      "planned_unique_validation_fits": 128,
+      "test_evaluation": false
+    }
+  },
+  "data_files_sha256": {
+    "data\\external\\kiba\\Y": "53857b84218ba3d60293c70ab79e2abd83d615d06218c73c150f6dfb4c7134a6",
+    "data\\external\\kiba\\ligands_can.txt": "a95797abaf31b17bd2471dbf3e3476f588d5a79797903cc156528f66e55c963b",
+    "data\\external\\kiba\\proteins.txt": "2ba9dbc2959d88b0740aaf28828c4c611c2dbd1c2019547eb2ec1c3daa192604",
+    "data\\external\\kiba\\folds\\train_fold_setting1.txt": "da74eeeb2c3e7d52a2fd6daac0dc105bba097c222337230eec69d9fd7e1c301e",
+    "data\\external\\kiba\\folds\\test_fold_setting1.txt": "92801eec2caddf950235c6c6a46d999d2eeeaa6d35cbeffd68c72a5cf54b208d"
+  },
+  "implementation_sha256": {
+    "reference\\__init__.py": "6a6e53d37f533c13654263df58fc6897a8ddd06bdc1889a9bda0e350383e8694",
+    "reference\\data.py": "3369d040f333635ce22d812e5d80b437ddc476f7f12a2e9cbc68cb39ae92b9a2",
+    "reference\\exposure.py": "2248012873c4740a586db4d22a871d0756fa31b35fdc19ee1f24407324f3abfe",
+    "reference\\io.py": "3202a5cd6971d2632c208d79d26f7aba9c4e79c74b0300fa77e8edb69501e4eb",
+    "reference\\lease.py": "ff5d8da1ba212b70ca190ab86df37669a7fbd1f3fadb7708e201498b896c6758",
+    "reference\\models.py": "46b969ddf33c7dbc9a45b6c23be97fabee9805f0f1cb05d2706805fc2a3698bb",
+    "reference\\study.py": "b6fe2244480aae7282850b647998d4aadbf418a51836ed130c6ab20a2af950df",
+    "reference\\train.py": "a7ae065b9beb6c9e49be040b119b87cd7aaeaa08cf786c4deda23660a91305d0"
+  },
+  "historical_test_exposure": "KIBA was prepared/discussed previously. No completed local KIBA predictions found in the recorded runs audit. This is an independent dataset, not a claim of historically secret test labels.",
+  "status": "Prespecified before new KIBA test predictions; experiments running, results not yet available."
+}

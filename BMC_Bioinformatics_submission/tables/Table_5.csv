@@ -1,0 +1,8 @@
+Metric,Mean,95% target-group interval,Groups
+Residue attention AP,0.13114,"[0.10251, 0.16419]",10
+Contact prevalence,0.07148,"[0.06072, 0.08214]",10
+Permutation AP,0.09311,"[0.07930, 0.10823]",10
+Gradient-times-input AP,0.11911,"[0.09900, 0.14283]",10
+Attention minus prevalence,0.05967,"[0.03084, 0.09449]",10
+Attention minus permutation,0.03803,"[0.00655, 0.07484]",10
+Attention minus gradient,0.01203,"[-0.00614, 0.03359]",10

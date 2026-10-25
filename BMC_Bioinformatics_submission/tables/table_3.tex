@@ -1,0 +1,14 @@
+\begin{table}[htbp]\centering\begin{singlespace}\small\setlength{\tabcolsep}{3pt}\renewcommand{\arraystretch}{1.3}
+\caption{Detection-plateau diagnostics and within-target ranking}
+\begin{tabular}{>{\raggedright\arraybackslash}p{0.1723404255319149\linewidth}>{\raggedright\arraybackslash}p{0.1819148936170213\linewidth}>{\raggedright\arraybackslash}p{0.07659574468085106\linewidth}>{\raggedright\arraybackslash}p{0.1340425531914894\linewidth}>{\raggedright\arraybackslash}p{0.1340425531914894\linewidth}>{\raggedright\arraybackslash}p{0.20106382978723403\linewidth}}
+\toprule
+\textbf{Model} & \textbf{Warm-test stratum} & \textbf{N} & \textbf{MSE} & \textbf{MAE} & \textbf{Macro within-target CI}\\\midrule
+BINDRA & all pairs & 5010 & 0.19663 & 0.23757 & 0.88300\\
+BINDRA & detection plateau & 3468 & 0.05498 & 0.11089 & Not this estimand\\
+BINDRA & above plateau & 1542 & 0.51520 & 0.52248 & Not this estimand\\
+BINDRA-iBAM & all pairs & 5010 & 0.19586 & 0.22683 & 0.90308\\
+BINDRA-iBAM & detection plateau & 3468 & 0.06462 & 0.09937 & Not this estimand\\
+BINDRA-iBAM & above plateau & 1542 & 0.49103 & 0.51348 & Not this estimand\\
+\bottomrule\end{tabular}\par\vspace{6pt}
+{\raggedright\footnotesize Plateau is pKd = 5 (3468/5010, 69.2\%); above-plateau is pKd > 5. Macro CI averages 356 target sequences with comparable pairs in the full warm test. Plateau labels all tie, so plateau-only CI is undefined. MSE is in squared pKd units and MAE in pKd units. Strata differ in label distribution and are diagnostic, not matched difficulty groups.\par}
+\end{singlespace}\end{table}

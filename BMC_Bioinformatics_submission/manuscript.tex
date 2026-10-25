@@ -1,0 +1,285 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=25mm]{geometry}
+\usepackage{lmodern}
+\usepackage{setspace}
+\usepackage{lineno}
+\usepackage{graphicx}
+\usepackage{array,longtable,booktabs}
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage[hidelinks]{hyperref}
+\usepackage{amsmath,amssymb}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{6pt}
+\setlength{\emergencystretch}{3em}
+\setcounter{secnumdepth}{0}
+\doublespacing
+\renewcommand{\topfraction}{0.9}
+\renewcommand{\bottomfraction}{0.85}
+\renewcommand{\textfraction}{0.05}
+\pagestyle{plain}
+\begin{document}
+\title{BINDRA: controlled evaluation of pooled fusion and interaction attention for protein-ligand affinity prediction}
+\author{\normalsize Kevin Song, John Zhang, Lei Ye, and Jianyi Zhang\\[4pt]\small Department of Biomedical Engineering\\\small University of Alabama at Birmingham, Birmingham, Alabama, USA\\\small Correspondence: Jianyi Zhang, \texttt{jayzhang@uab.edu}}
+\date{}
+\begin{singlespace}\maketitle\end{singlespace}
+\linenumbers
+Research article draft prepared for BMC Bioinformatics. Author contributions, funder involvement, public repository identifiers, and final author approval require confirmation before submission.
+
+\section*{Abstract}
+\subsection*{Background}
+Pretrained representations support protein-ligand affinity prediction, but the predictive contribution and explanatory meaning of interaction attention remain uncertain. We developed BINDRA, Binding INference Design Retrieval and Attention, to compare pooled fusion with explicit attention under controlled downstream training.
+
+\subsection*{Results}
+Three-seed validation selected a capacity-matched pooled ensemble, BINDRA, and retained the strongest attention model as BINDRA-iBAM. On the official 5010-pair Davis test, their mean squared errors were 0.19663 and 0.19586, with concordance indices 0.90802 and 0.91253. The paired attention-minus-pooled error difference was -0.00077 (95\% crossed-bootstrap interval, -0.01464 to 0.01410). Cold-protein error favored attention by 0.05343, whereas cold-drug error had a less certain difference in the opposite direction. Detection-plateau observations comprised 69.2\% of the warm test. Across 30 crystal complexes in ten target groups, mean residue attention average precision was 0.13114, compared with contact prevalence 0.07148, permutation control 0.09311, and gradient-times-input attribution 0.11911. Attention differed from the permutation control, but its paired interval against gradients included zero. Randomization and atom-order controls exposed limits of attention interpretation. Supporting diffusion experiments recovered no measured analog in 9000 strict-subset draws across five queries and three series. An independent KIBA benchmark with local neural and classical baselines and additional Davis validation folds is prespecified; its results are pending.
+
+\subsection*{Conclusions}
+Pooled fusion provided a strong validation-selected predictor, while the relative value of attention depended on the evaluation protocol. Attention-contact correspondence was modest and did not establish causal binding explanations. Historical Davis test exposure limits confirmatory claims; independent benchmark completion is required before submission.
+
+\textbf{Keywords:} drug-target affinity; pooled fusion; cross-attention; generalization; interpretability
+
+\section*{Background}
+Predicting how strongly a molecule binds a protein is a central task in computational drug discovery. Affinity models can rank candidates before experimental testing, but their practical value depends on the evaluation setting. A model that predicts unseen combinations of familiar molecules and proteins may behave differently when the molecule or protein is absent from supervised training. The Davis kinase-inhibitor dataset provides a widely used quantitative benchmark, but its limited chemical diversity, repeated protein constructs, and detection-limit measurements require careful interpretation \citep{davis2011}.
+
+DeepDTA established a sequence-based neural benchmark using molecular strings and protein sequences \citep{deepdta2018}. WideDTA added molecular and protein subsequence information \citep{widedta2019}, while GraphDTA and DGraphDTA introduced molecular graphs and protein contact representations \citep{graphdta2021,dgraph2020}. MGraphDTA developed multiscale molecular representations with visualization analyses \citep{mgraph2022}. Subsequent approaches have used attention, protein language models, knowledge distillation, semisupervised learning, and hybrid graphs \citep{fusion2022,ssm2023,nhgnn2023}. Recent preprints include graph-transformer and cross-attention methods and curvature-based processing of molecular and predicted protein contact graphs \citep{hgtdp2024,hcaf2025,curvflow2026}. These methods differ in external resources and evaluation protocols. A lower reported error on a dataset with the same name does not by itself establish a matched comparison.
+
+Pretrained protein and molecular encoders offer another route to affinity prediction. ESM Cambrian provides contextual residue representations learned from protein sequences \citep{esmc2024,esmcode}. The Line Graph Transformer in KPGT represents molecular connectivity using bond-centered tokens and global chemical information \citep{light2023}. Contrastive protein-ligand methods also illustrate the value of pretrained representations for interaction prediction \citep{conplex2023}. However, strong pooled representations can obscure the incremental contribution of a more elaborate interaction module. A controlled comparison should therefore test explicit interaction modeling against simpler fusion with comparable downstream capacity.
+
+Attention maps provide accessible summaries of model computation, but an emphasized residue is not necessarily a causal determinant of binding. Attention can depend on topology, tokenization, pooling, or redundant prediction paths. Previous work has shown that attractive attribution maps can persist after parameter randomization and that attention weights do not automatically constitute explanations \citep{attention2019,sanity2018}. Crystal structures provide an independent geometric reference for contact agreement, but agreement with a structure and sensitivity of a prediction are distinct questions.
+
+Molecular generation requires additional evidence. A valid chemical graph can be a duplicate, a seed copy, an irrelevant edit, or a molecule without useful affinity. Joint prediction-generation frameworks already exist, including DeepDTAGen \citep{deepdtagen2025}; combining these tasks alone is not a novelty claim. Denoising diffusion provides a flexible framework for generative modeling, including discrete molecular edits \citep{ho2020,discrete2021}. Evaluating an independently trained generator against conditioning controls can test whether target information adds value beyond the seed and scaffold constraints.
+
+We designed BINDRA to address two primary questions: does explicit protein-ligand attention improve prediction over pooled fusion with comparable downstream capacity, and how do its maps correspond to crystal contacts and respond to representation and parameter controls? Warm and cold protocols distinguish interpolation from entity generalization. Retrospective screening and independent molecular editing provide supporting tests of practical limits. Their negative results delimit practical applicability.
+
+\section*{Methods}
+\subsection*{Study design and model roles}
+Primary model selection used mean validation MSE across seeds 20261001, 20261002, and 20261003. The selected pooled model is called BINDRA. The best attention architecture is BINDRA-iBAM, the Interpretable Binding Attention Map companion. Each ensemble averages its three pKd predictions; individual-member performance is reported separately. Independently learned latent coordinates are not averaged, and member disagreement is not a calibrated prediction interval.
+
+Earlier development included Davis test inspection and exploratory architecture comparisons. Validation-only selection of the present models does not restore a historically untouched test. The Davis results are therefore retrospective architectural evidence rather than an unbiased new benchmark claim. No affinity weights were updated for screening, attention assessment, generation, or docking. Development chronology and numerical reproduction details are provided in Additional file 1.
+
+\subsection*{Davis data and evaluation partitions}
+We used the official DeepDTA Davis data and fold files \citep{deepdta2018}. The benchmark contains 30056 observations from 68 ligand identifiers and 442 target identifiers. The latter correspond to 379 unique protein sequences in the released data. Labels were transformed to pKd as minus the base-10 logarithm of Kd in molar units. The published pKd = 5 detection plateau was retained in the primary analysis and examined separately in error diagnostics.
+
+The official warm test contains 5010 pairs, and the training pool contains 25046 pairs. For the controlled experiments, official fold 0 supplied 5010 validation pairs and folds 1 through 4 supplied 20036 fitting pairs. This was three-seed validation replication on one fixed validation fold, not five-fold cross-validation. Final warm models used all five training folds for a fixed duration derived from validation. Exported test rows were sorted by official pair index; their membership, labels, and indexing were checked against the released fold files.
+
+Noncanonical cold-drug and cold-protein assignments targeted 70\%, 10\%, 10\%, and 10\% fitting, validation, calibration, and test fractions using label-independent group allocation. Cold-drug separation used normalized chemical identities, not a claim of scaffold exclusion. It retained 20332 fitting, 3094 validation, 3094 calibration, and 2652 test pairs, with 884 quarantined rows retained in an exclusion table. Cold-protein separation used exact protein sequences and retained 21080, 2992, 2992, and 2992 pairs, respectively. These protocols used their own trained ensembles. Nearest-training Morgan similarity and sequence identity were exported to describe the degree of novelty \citep{morgan2010}. Exact sequence separation does not establish target-family exclusion, and supervised chemical exclusion does not imply absence from pretraining. These results do not include scaffold or cold-both protocols.
+
+\subsection*{Frozen encoders and downstream architecture}
+The protein encoder was the original pretrained ESM-C 600M model, frozen throughout the controlled affinity comparisons. It produced a 1152-dimensional representation for each residue. Sequences exceeding 2046 residues were encoded in windows with 256-residue overlap; shared residue vectors were averaged. Padding and special tokens were excluded from residue pooling. Cached upstream representations were bound to encoder and preprocessing identities.
+
+The ligand encoder was a local LiGhT-mini implementation inspired by the bond-token representation of KPGT \citep{light2023}. Each bond was represented as an atom-bond-atom triplet, with isolated atoms retained. Fingerprint and descriptor tokens supplied global chemical information. The encoder used width 96, eight transformer layers, and eight attention heads. It was trained from scratch for five completed pretraining epochs on 649364 eligible BindingDB molecules, then frozen for the controlled affinity experiments \citep{bindingdb2007}. This was the recorded eligible corpus, not all publicly available chemistry. The checkpoint and exposure audit distinguish supervised Davis training from ligand-pretraining exposure. The protein encoder's complete historical pretraining exposure could not be reconstructed. The chemical audit uses the actual eligible pretraining SMILES rather than treating the complete BindingDB download as the training set. Separate identity, parent, and scaffold keys distinguish exact exposure from related chemistry. This distinction also separates a supervised-cold split from a claim of chemically unseen pretraining. Missing normalization cannot support either a clean or an exposed assignment and remains an explicit unknown in stratified reporting. These qualifications apply independently of the final affinity head.
+
+Member-specific adapters used layer normalization and projection to width 192. Eight downstream arms tested protein-only prediction (A), ligand-only prediction (B), pooled concatenation (C), gated pooled fusion (D), the original interaction fusion with feature-wise linear modulation (FiLM; E), the same bidirectional attention with FiLM disabled (F), grouped readout gates added to E (G), and a parameter-matched concatenation control (C-matched). G retained the existing readouts and applied pair-dependent scalar gates to interaction, ligand-global, and protein-only groups. Identity scaling at initialization prevented information-path removal from being conflated with gating.
+
+The selected BINDRA model pooled protein and ligand features and retained three ligand-global readouts, producing five 192-dimensional vectors. Its regression head mapped 960 to 1648 to 256 to one pKd value. It had 2455221 fitted downstream parameters per member. The BINDRA-iBAM model used two bidirectional cross-attention layers, eight heads, feed-forward width 576, and no FiLM. Its six readouts included fused protein and ligand features, three ligand-global features, and a pre-fusion protein bypass. Its head mapped 1152 to 256 to one value, with 2228293 fitted parameters per member. Figure 1 shows the controlled prediction paths and shared encoder inputs.
+
+\subsection*{Tuning and validation selection}
+Each neural arm received the same six-configuration grid: learning rates 0.0001, 0.0003, and 0.001 crossed with dropout 0.1 and 0.2. Training used AdamW, weight decay 0.01, effective batch size 128, a maximum of 200 epochs, and patience 15. Checkpoints were selected by validation MSE. The chosen configuration for each arm was replicated across the three declared seeds, reusing the eligible first-seed tuning fit. The ceiling of the median best validation epoch determined full-pool warm refit duration.
+
+BINDRA and BINDRA-iBAM both selected learning rate 0.0003 and dropout 0.1 and used 69-epoch final warm refits. BINDRA's fitted parameter count was within 1\% of E and G, while the compact C control had fewer parameters. Thus, C versus C-matched also tests downstream capacity; it is not an isolated test of a single fusion operator. Final model selection did not use the relative test point estimates. The new independent protocol below adds local neural and classical controls. Its unfinished results do not enter the Davis tables.
+
+\subsection*{Prediction metrics and statistical analysis}
+Validation MSE was the primary selection criterion. Test metrics included MSE, root MSE (RMSE), mean absolute error (MAE), concordance index (CI), Pearson and Spearman correlations, and within-target macro CI. CI considers unequal-label pairs, credits correctly ordered predictions by one, and credits prediction ties by one half. MSE has squared pKd units, while RMSE and MAE have pKd units. Within-target CI excludes targets without comparable observations and is not interchangeable with a pooled CI. Pooled CI includes comparisons across different targets, whereas within-target CI asks whether the model orders ligands for the same sequence. Both are useful, but a high pooled score can conceal weaker prioritization within an individual target. We therefore report comparable-target counts alongside macro averages rather than treating the two rankings as interchangeable evidence.
+
+We exported two documented \(r_m^2\) conventions, including the DeepDTA implementation and the conventional expression, without treating them as identical. Classification diagnostics defined actives as pKd \(\geq\) 7 and reported average precision (AP) separately from trapezoidal precision-recall area. AP summarizes precision as recall increases; it is influenced by active prevalence. The exact integration and threshold implementation accompany the numeric exports.
+
+Individual-member metrics and sample seed standard deviations describe training variation. Sampling intervals for ensemble predictions used 1000 crossed bootstrap resamples over exact construct sequences and Murcko scaffold groups, with the same sampled rows for paired model contrasts \citep{bemis1996}. These groups do not fully capture protein homology or chemical dependence. Structural intervals resampled target groups, and generator intervals resampled chemical series. Query-weighted seed means and equally weighted series estimates were labeled separately. We did not test statistical superiority against published scalar metrics or interpret 90000 generated draws as 90000 independent biological observations.
+
+Conformal calibration was not performed. Canonical full-pool refits have no independent calibration observations, and the cold-protocol calibration analysis was withheld because normalized-pair replication required stronger isolation. Ensemble disagreement remained descriptive. The main findings therefore concern point predictions, clustered sampling uncertainty, and observed failure modes, not calibrated per-compound confidence.
+
+\subsection*{Literature comparison and independent benchmark protocol}
+The source-linked registry covers 2018 through October 17, 2026 and separates author-reported metrics by split, inputs, pretraining, selection, publication status, and aggregation. These literature values provide context, not controlled reruns or a universal ranking. The full qualified table is supplementary.
+
+To test generalization beyond Davis, we prespecified a separate KIBA evaluation before new test scoring. The official setting1 test contains 19709 observations. KIBA scores remain on their own scale and receive a dedicated regression output, never a pKd interpretation. Fresh supervised BINDRA and BINDRA-iBAM weights use the original frozen encoders. GraphDTA-GIN and MGraphDTA use checksum-pinned official implementations. Morgan fingerprints plus amino-acid and dipeptide composition provide ridge and random-forest controls. All methods use identical pair partitions and the first 1000 protein residues. Molecular encodings and external encoder pretraining remain explicit resource differences.
+
+Each neural method receives six learning-rate/dropout configurations and validation folds 0, 1, and 2 within the official training pool. Mean validation MSE selects configurations; median best epoch determines full-pool refit duration. Three independent refit seeds yield individual and equal-weight ensemble predictions. Classical hyperparameters use the same validation partitions; deterministic ridge is fitted once. Test scoring is gated on completed exposure audits, frozen selections, and all refits. Chemical identity, normalized-parent, and scaffold overlap with the actual ligand-pretraining corpus are audited separately from supervised Davis pair overlap; unresolved mappings remain unknown.
+
+Additional Davis folds 1 and 2 independently repeat all six configurations for every architecture and replicate the selected configuration across three seeds. These analyses test selection stability without rescoring the Davis test. The independent benchmark and fold-replication results remain pending and must be incorporated before submission. Their manifests preserve the official row ordering, source hashes, method-specific inputs, tuning decisions, and fixed refit durations. A published test set is independent here in dataset identity and prespecified execution, not a claim that its labels were previously inaccessible. The local baseline reruns address split and selection comparability, while the documented pretraining difference remains part of the comparison. No KIBA outcome can retrospectively change the frozen Davis architecture decision.
+
+\subsection*{Supporting screening, generation, and docking}
+Three coverage-selected measured-negative screening panels required at least ten actives at pKd \(\geq\) 7 and ten weak compounds at pKd \(\leq\) 5. Frozen ensembles scored every candidate. Comparators included seed fingerprint similarity, property distance, random ranking, and seed-assisted percentile-rank averaging. Seeds and duplicate identities were excluded. Measured negatives were separated from property-matched presumed decoys, without assigning fabricated affinities to unlabeled molecules.
+
+An independent scaffold-preserving graph-diffusion generator was trained under six matched conditioning conditions and three seeds each. Seed graph, target, endpoint, member-specific features, and mapped iBAM context supplied conditioning; product information did not. Connected chemical series remained within partitions. Fifty prespecified held-out queries received 100 draws per condition and seed. Strict Davis-construct Kd recovery was primary; Ki and IC50 strata remained separate. No repair was applied, and affinity predictions did not optimize the generator. Bounded Vina docking used native redocking gates and hash-selected generated compounds. Full training, query, preparation, and docking methods are in Additional file 1 \citep{ho2020,discrete2021,vina2021,meeko,posebusters2024}.
+
+\subsection*{Assessment of attention-contact correspondence}
+We retained a fixed panel of up to three complexes per target group, selected by structural quality and coverage rather than attention agreement. The final panel contained 30 noncovalent small-molecule complexes across ten target groups, each with resolution at most 2.5 angstrom and usable chemical and sequence mappings. Experimental structures were obtained from the Protein Data Bank \citep{pdb2000}. Mapping exports retained construct-to-author residue numbering, insertion codes, missing residues, mutations, alternate conformations, and ligand symmetry. FAK1-P4N in PDB 6YOJ was the detailed structural example \citep{pdb6yoj}.
+
+For each BINDRA-iBAM member, iBAMs used the last cross-attention layer averaged across heads. We aligned residue and atom coordinates before averaging member maps. Both attention directions, individual heads, and nonphysical-token mass were retained. Ligand-to-protein attention defined residue salience. Physical-contact analyses excluded knowledge and padding tokens and used minimum heavy-atom distance \(\leq\) 4 angstrom, with 3.5- and 5-angstrom sensitivity analyses. We reported residue and residue-atom AP, top-residue enrichment, and informative ligand-atom agreement alongside uniform and permutation controls. Raw weights supported analysis; any display normalization was labeled.
+
+Controls examined head and member agreement, molecular atom ordering, target or ligand swaps in predictions, progressive parameter randomization, protein-feature gradient-times-input, and 10\% residue-feature masking with ten matched random controls. Gradient calculations traversed all protein-using interaction and bypass paths but did not provide complete attribution of ligand and global inputs. Feature masking may be outside the training distribution. The present controls do not include integrated gradients, multiple masking fractions, or coordinate-aligned explanation-map swaps.
+
+Ligand bond maps were evaluated separately because they describe self-attention in the shared frozen ligand encoder before target conditioning. Knowledge-token mass, topology controls, atom-order stability, parameter randomization, and mapped analog edits were exported. Repeated member entries used the same ligand weights and were not independent ligand-encoder replicates. Contact agreement and model sensitivity were treated as distinct evidence rather than proof of a causal binding mechanism.
+
+\subsection*{Implementation and reproducibility}
+Experiments used sequential GPU jobs on an NVIDIA RTX 5060 Ti with 16 GB memory. Frozen upstream features were cached with encoder, preprocessing, and schema identities. BF16, fused AdamW, length bucketing, graph trimming, bounded caches, and numerically checked acceleration reduced repeated computation. Checkpoints included optimizer and random states. Software versions, split assignments, failures, numeric maps, source checksums, and resumption contracts accompany the supplementary records. RDKit supported chemical processing \citep{rdkit}.
+
+An OpenAI coding assistant assisted implementation, checking, figure preparation, and drafting. It was not assigned authorship. The authors retain responsibility for scientific verification and final approval. The public reference implementation provides downstream models, a locked independent protocol, official-baseline source pins, tests, and validation-only training. Full encoder and data assets require separate repository identifiers and redistribution terms.
+
+\section*{Results}
+\subsection*{Pooled fusion won validation selection}
+The protein-only and ligand-only arms had mean validation MSEs of 0.71282 and 0.62299, respectively. Combining protein and ligand representations substantially reduced error within this experiment. Compact concatenation achieved 0.23409, gated pooled fusion 0.23213, and the original FiLM attention arm 0.23490. Removing FiLM improved the attention arm's point estimate to 0.22461. Adding grouped gates to the FiLM arm yielded 0.23569. The capacity-matched pooled model had the lowest mean validation MSE, 0.21528, and was selected as BINDRA (Table 1; Figure 2).
+
+BINDRA had 2455221 fitted parameters, compared with 2451205 for E and 2454664 for G. The comparison therefore does not favor the pooled model by providing fewer parameters to the original interaction architecture. However, BINDRA was larger than compact concatenation, so the contribution of capacity and fusion simplicity cannot be completely separated. The no-FiLM attention model was retained as BINDRA-iBAM because it had the lowest validation error among the attention arms. Seed variation was appreciable relative to differences among the strongest arms. Parameter matching concerns the fitted downstream modules, not the much larger shared frozen encoders. The pooled and attention readouts also differ in optimization geometry and access to interaction features. Matching a parameter count therefore improves fairness without isolating every possible architectural factor. The comparison tests the complete downstream designs under a common search budget; it does not assign an independent causal effect to one attention block.
+
+\nolinenumbers\input{tables/table_1.tex}\linenumbers
+\subsection*{Warm-test differences were small relative to sampling uncertainty}
+On the official warm test, BINDRA achieved MSE 0.19663, CI 0.90802, RMSE 0.44343, and MAE 0.23757. BINDRA-iBAM achieved MSE 0.19586, CI 0.91253, RMSE 0.44256, and MAE 0.22683. Table 2 distinguishes single-model variation from three-model ensemble performance and sampling intervals. The paired attention-minus-pooled MSE difference was -0.00077, with a 95\% interval of -0.01464 to 0.01410. The corresponding CI difference was 0.00451, with interval -0.00372 to 0.01422 (Table 4). Neither warm contrast resolved a clear advantage, and the validation-selected primary model remained unchanged.
+
+\nolinenumbers\input{tables/table_2.tex}\linenumbers
+The detection plateau accounted for 3468 of 5010 observations, or 69.2\%. BINDRA's MSE was 0.05498 on plateau observations and 0.51520 above the plateau. These strata have different label distributions, so their errors are diagnostic rather than matched difficulty estimates. BINDRA-iBAM's stratum errors and both models' within-target ranking are shown in Table 3. Within-target macro CI was 0.88300 for BINDRA and 0.90308 for BINDRA-iBAM across 356 comparable target sequences. Plateau-only within-target CI is undefined because the labels tie. Predicting the plateau can reduce global squared error without resolving differences among weak compounds. Above-plateau observations account for most of the pooled model's total squared error despite being the smaller stratum. The attention companion has slightly lower above-plateau MSE and slightly higher plateau MSE, illustrating how similar aggregate errors can arise from different behavior. These observations motivate reporting both strata, not removing plateau observations from the canonical benchmark. Per-target, per-ligand, correlation, AP, and \(r_m^2\) diagnostics remain available in the machine-readable exports (Figure 3).
+
+\nolinenumbers\input{tables/table_3.tex}\linenumbers
+Author-reported values place both ensembles in a competitive Davis range. BINDRA-iBAM's MSE point estimate was lower than reported DeepDTA, GraphDTA-GIN, and MGraphDTA values; HGTDP-DTA and CurvFlow-DTA reported lower MSE, and FusionDTA reported higher CI. Additional inputs, split differences, pretraining, averaging, and selection policies qualify these comparisons. NHGNN-DTA and SSM-DTA used alternate random splits. No significance or universal superiority claim is made from cross-paper scalar metrics. Independent KIBA reruns address a different, prespecified comparison and are not yet results.
+
+\subsection*{Cold-start behavior depended on architecture and entity type}
+Cold-drug MSE was 0.50382 for BINDRA and 0.63600 for BINDRA-iBAM; their CIs were 0.71484 and 0.72429. The paired MSE difference of 0.13218 had a wide interval, -0.01051 to 0.39766. Only six Murcko groups represented the cold-drug test chemistry, limiting precision. Within-target macro CI was 0.66125 for BINDRA and 0.66306 for BINDRA-iBAM across 307 comparable sequences. Thus, the pooled error point estimate and attention ranking point estimate did not establish a reliable overall advantage.
+
+For cold-protein evaluation, BINDRA-iBAM had lower MSE (0.22579 versus 0.27922) and higher CI (0.87194 versus 0.84526). The paired MSE interval was -0.11132 to -0.00297; the paired CI interval was 0.00299 to 0.05159 (Table 4; Figure 4). Within-target macro CI was 0.86785 for BINDRA and 0.89303 for BINDRA-iBAM across all 44 held-out sequences. Both intervals excluded zero under the declared grouping. The contrast compares models on the same observations and is therefore more informative than comparing two separately computed marginal intervals. However, resampling exact sequences does not create new target families, and resampling a small chemical panel does not establish behavior across all drug-like chemistry. The interval quantifies uncertainty under the recorded dependence model. It does not absorb architecture-search history, dataset reuse, or arbitrary changes to the split. This remains exploratory evidence from one partition, without multiplicity correction. It supports protocol-dependent architectural behavior rather than a general claim that either fusion approach is superior.
+
+\nolinenumbers\input{tables/table_4.tex}\linenumbers
+Cold-drug ligands had median nearest-training Morgan similarity 0.306, with familiar target sequences. Cold-protein sequences had median nearest-training identity 0.533, with interquartile range 0.356 to 0.662, and familiar chemicals. These values describe novelty rather than family exclusion. Calibration was withheld, and raw member disagreement does not supply calibrated coverage.
+
+\subsection*{Attention-contact correspondence was modest and control dependent}
+All 30 complexes across ten target groups met the structural and mapping criteria. At 4 angstrom, equally weighted target-group mean residue AP was 0.13114, compared with contact prevalence 0.07148, permutation AP 0.09311, and gradient-times-input AP 0.11911 (Table 5; Figure 5). Attention exceeded prevalence by 0.05967, with a 95\% target-group interval of 0.03084 to 0.09449. Its increment over permutation was 0.03803 (0.00655 to 0.07484), while the increment over gradients was 0.01203 (-0.00614 to 0.03359). These secondary paired control contrasts were computed from frozen maps. They do not establish that attention outperforms gradient attribution. Uniform prevalence is a necessary but weak comparator: average precision for finite random rankings need not equal prevalence, as the empirical permutation result demonstrates. The gradient comparator asks whether local feature sensitivity identifies contact residues, whereas attention measures normalized information weighting. Neither is trained to recover a crystal contact map. Consequently, their absolute AP and paired differences are more informative than describing either as a validated physical interaction detector.
+
+\nolinenumbers\input{tables/table_5.tex}\linenumbers
+Mean residue-map Spearman agreement after atom reordering was 0.98951, and mean absolute prediction change was 0.02153 pKd. Progressive randomization through cross-attention reduced agreement to 0.12857; randomization through the adapters reduced it to -0.00911. Randomizing only the downstream regression head left attention unchanged by construction, despite altering predictions. Member-level controls were averaged within complex and target; they are not 90 independent biological replicates.
+
+Bond maps showed a different sensitivity profile. Across 27 unique ligands, median full-matrix atom-order correlation was 0.92249. Median correlation remained 0.99801 after all eight transformer layers were randomized and 0.95174 after whole-encoder randomization. In the secondary supported-nondiagonal analysis, the corresponding latter values were 0.96192 and 0.23822. These distinctions expose the influence of matrix support and shared representation structure. A high full-matrix correlation alone does not demonstrate learned chemical explanation. All affinity members share one frozen ligand encoder, so repeated member maps are not independent encoder replications.
+
+FAK1-P4N in 6YOJ provides the detailed 1.361-angstrom example. Its BINDRA-iBAM pKd prediction was 5.41667, without treating Ki or IC50 annotations as interchangeable labels. The measured active/weak Kd pool contained seven compounds, below the primary screening coverage rule. Supplementary residue and bond maps retain this exploratory case alongside unfavorable panel results. Physical-contact correspondence, parameter dependence, and prediction sensitivity answer distinct questions. A map can remain stable when a downstream head changes because that head is absent from the map computation. Conversely, changing an upstream adapter can alter both maps and predictions without demonstrating that the highlighted residues cause binding. The supported-edge bond analysis was added after inspecting full-matrix behavior and remains explicitly secondary. Its different result is diagnostic of the representation and scoring domain, not an opportunity to select a more favorable explanation metric.
+
+\subsection*{Supporting studies did not establish screening or design superiority}
+The measured-negative panels contained 73, 25, and 38 compounds for galectin-3, beta-2 adrenergic receptor, and KEAP1. BINDRA AP was 0.533, 0.408, and 0.487, compared with seed fingerprint AP of 0.983, 0.920, and 0.720. Target-only and seed-informed methods had different inputs; neither these results nor the companion rankings established general screening superiority.
+
+Eighteen generator fits produced 90000 draws across six conditions and three seeds. In the five-query strict Kd subset spanning three series, all conditions achieved 100\% raw validity and scaffold retention, but none recovered a measured analog in 9000 draws. Structured overall validity was 88.37\%. These outcomes establish chemical constraints under the sampling policy, not useful target-conditioned design.
+
+Generated docking covered one qualifying query. Of 90 hash-selected instances, 55 failed preparation; 35 produced 105 search poses, of which 91 passed overall geometry checks. Preparation success was 38.9\%, while pose checks passed for 86.7\% of prepared poses. These different denominators prevent a misleading impression of broad docking success. Full generation, preparation failures, docking, and retrieval results are supplementary.
+
+\section*{Discussion}
+The primary architectural result was that a parameter-matched pooled model outperformed the tested attention architectures on three-seed validation. Both the pooled and no-FiLM attention ensembles achieved competitive Davis warm-test performance, but their small test MSE difference was uncertain. This finding argues for evaluating interaction modules against strong pooled controls before attributing predictive gains to attention. It does not establish that attention is generally unnecessary: BINDRA-iBAM performed differently across cold protocols and retained a useful interface for structural attention analysis.
+
+The distinction between predictive performance and interpretability was central. Residue attention showed panel-level agreement with crystal contacts, yet individual cases, atom-pair analyses, atom ordering, and randomization controls limited the strength of interpretation. A structural contact can be attended without being a causal determinant of a model's output, and a predictive model can use global features without producing a clear physical map. The retained iBAM companion therefore supports questions about model emphasis and structural correspondence, rather than a definitive account of molecular binding mechanisms.
+
+The screening results also constrained the platform's practical claims. Target-only rankings did not consistently outperform simple seed-based controls, and the available panels extended beyond the kinase-focused training domain. The study shows how a platform can export complete rankings, exposure audits, and unfavorable cases without converting retrospective examples into an unsupported general drug-fishing claim. Broader screening utility will require larger independent panels with appropriate chemical and target diversity and measured negatives.
+
+The generation study demonstrated a similar separation between valid outputs and useful conditional design. Scaffold constraints and valence-aware sampling produced high validity, but measured-analog recovery remained zero in every strict-Kd condition. Neither favorable denoising loss nor exact training novelty rescued that primary negative outcome. The controls did not establish an incremental benefit of structured iBAM context. Future work should first improve measured edit support and test target dependence before increasing model complexity or making claims about novel active molecules.
+
+Several limitations affect interpretation. Davis includes only 68 ligand identifiers, a large detection plateau, and repeated exact protein sequences under different target identifiers. Warm, cold-drug, and cold-protein evaluations therefore answer different questions. Cold-protein separation is not family exclusion, and ligand pretraining changes what chemically unseen means. Broad pretraining, three-model averaging, varying literature inputs, and historical test exposure prevent a universal state-of-the-art claim. The current completed comparisons cover one dataset and one validation fold. Independent KIBA reruns and additional foldwise selection are required additions, not evidence already supplied by the literature table. Until complete, they remain a submission limitation.
+
+The supporting studies have additional boundaries. The structural panel contains ten dependence groups, the strict generation subset contains three chemical series, and generated docking covers one eligible query/receptor after native gates and preparation failures. Crystal structures can reflect particular constructs and conformational states. Protein-feature gradients do not provide complete attribution of all global and ligand branches. Expanded attribution controls, additional datasets, prospective binding assays, synthetic feasibility assessment, and experimental analog testing were outside this final scope. These boundaries are part of the reported evidence rather than tasks silently treated as completed.
+
+The contribution is a controlled evaluation of predictive fusion and the limits of interaction attention. A strong pooled control changes the architectural conclusion drawn from the same pretrained representations. Cross-protocol contrasts and attention controls further show why competitive prediction, structural correspondence, and causal explanation require separate evidence. Independent replication will determine whether these findings extend beyond Davis. The intended practical conclusion is therefore conditional: start with a well-tuned pooled baseline, evaluate attention under the intended novelty setting, and inspect explanations against both physical and model-based controls. For a new-target application, within-target ranking and cold-protein behavior may matter more than a small warm-pair error difference. For chemical prioritization, cold-drug errors and seed-based similarity provide necessary reference points. These choices follow the application rather than whichever retrospective metric is most favorable.
+
+\section*{Conclusions}
+BINDRA's capacity-matched pooled ensemble won three-seed validation, while its attention companion showed similar warm-test error and better cold-protein performance under the declared exploratory comparison. Residue attention exceeded contact prevalence and permutation controls but was not clearly superior to gradient attribution. Bond-map randomization exposed substantial representation dependence. Supporting generation did not establish measured recovery or target-conditioned design. Independent benchmarking and additional validation folds are underway; their completion is necessary before submission.
+
+\section*{List of abbreviations}
+AP, average precision; BF16, bfloat16 numerical format; CI, concordance index; DTA, drug-target affinity; FiLM, feature-wise linear modulation; iBAM, Interpretable Binding Attention Map; MAE, mean absolute error; MSE, mean squared error; PDB, Protein Data Bank; RMSE, root mean squared error; RMSD, root-mean-square deviation; SMILES, simplified molecular-input line-entry system.
+
+\section*{Declarations}
+\subsection*{Ethics approval and consent to participate}
+Not applicable. This computational study used protein sequences, small-molecule affinity data, and public macromolecular structures and did not recruit human participants or perform animal experiments.
+
+\subsection*{Consent for publication}
+Not applicable. The manuscript does not contain identifiable individual participant data.
+
+\subsection*{Availability of data and materials}
+The draft submission package includes the tabular results, frozen prediction exports, all generated-draw records and rejection reasons, and reviewed figures described in Additional files 1 through 5. Full checkpoints, chemical structure files, raw per-head attention matrices, environment records, and an artifact inventory are retained in the versioned research package. The reference code and revision protocol are available at https://github.com/kevinmsong/bindra/tree/main/reference. \textbf{AUTHOR ACTION REQUIRED:} deposit the reproducibility assets in an appropriate persistent repository, supply persistent data and full-model identifiers, and document access and redistribution conditions for third-party data and encoder weights. Local workspace paths are not public availability. Replace this draft statement with the final repository-based availability statement before submission.
+
+\subsection*{Competing interests}
+The authors declare that they have no competing interests.
+
+\subsection*{Funding}
+This study was supported in part by the National Institutes of Health and National Heart, Lung, and Blood Institute under grant numbers U01HL134764, P01HL160476, R01HL131017, and R01HL149137. \textbf{AUTHOR CONFIRMATION REQUIRED:} describe any funder role in study design, data collection, analysis, publication decisions, or manuscript preparation.
+
+\subsection*{Authors' contributions}
+\textbf{AUTHOR INPUT REQUIRED:} specify the contributions of Kevin Song (KS), John Zhang (JZ), Lei Ye (LY), and Jianyi Zhang (JYZ), and confirm that all authors reviewed and approved the final manuscript. Contribution roles and approval have not been inferred from author order.
+
+\subsection*{Acknowledgments}
+\textbf{AUTHOR CONFIRMATION REQUIRED:} list any additional contributors with their permission, or state that no additional acknowledgments are applicable. Coding and drafting assistance is disclosed in Methods.
+
+\section*{Additional files}
+\textbf{Additional file 1. Supplementary methods and analyses. PDF with editable LaTeX source.} Detailed protocol and metric definitions, historical exposure, selected FAK1-P4N iBAM and bond-map views, control analyses, and native docking results.
+
+\textbf{Additional file 2. Full result tables. ZIP containing CSV and JSON files.} Architecture selection, individual models, endpoint-specific generator metrics, all screening rankings summarized by target and method, structural panel results, docking failures and pose checks, literature qualifications, analysis scope, and paired comparisons.
+
+\textbf{Additional file 3. Frozen Davis predictions and partitions. ZIP containing Parquet and JSON files.} Primary and companion predictions by protocol and member, official-order identifiers, model manifests, split assignments and exclusions, and nearest-training similarity audits. Parquet files can be read with pandas or Apache Arrow.
+
+\textbf{Additional file 4. Complete generator draw records. ZIP containing CSV, Parquet, and JSON files.} All 90000 draws, including invalid outcomes and rejection reasons, query selection, endpoint strata, graph exclusions, and configuration identities.
+
+\textbf{Additional file 5. Reviewed figure collection. ZIP containing PDF and JSON files.} The complete figure collection, source metadata, and review records. Large raw arrays, checkpoints, and SDF files are listed in the artifact inventory for repository deposit rather than represented as already public supplementary material.
+
+\section*{Figure legends}
+\textbf{Figure 1. Controlled predictive architectures.} Original frozen encoders supply common residue, ligand-token, and global features. BINDRA pools these representations; BINDRA-iBAM adds bidirectional cross-attention without FiLM. Explicit bypass paths feed regression. Each ensemble averages three predictions. Parameter counts exclude shared frozen encoders. Bond maps precede target conditioning.
+
+\textbf{Figure 2. Validation selection.} Eight downstream arms use the same frozen encoders, six configurations, and three selected-model seeds. Mean validation MSE and seed variation are shown. Official fold 0 supplies validation; folds 1 through 4 supply fitting. Additional foldwise selection is pending. Seed variation is distinct from test sampling uncertainty.
+
+\textbf{Figure 3. Davis error diagnostics.} Three-member BINDRA predictions cover 5010 official warm-test pairs, including 3468 at the pKd = 5 plateau. Separate stratum and per-entity errors reveal heterogeneity concealed by overall MSE. Units and counts are explicit. Membership and observation identity follow the official release.
+
+\textbf{Figure 4. Paired architectural contrasts.} Attention-minus-pooled MSE and CI differences use 1000 crossed resamples of sequence and Murcko groups, with shared sampled observations for both models. Horizontal bars are 95\% percentile intervals. Cold-protein intervals exclude zero in this exploratory analysis; there is no multiplicity correction. Cold-drug uncertainty reflects only six chemical groups.
+
+\textbf{Figure 5. Attention-contact correspondence and sensitivity.} Absolute residue AP, prevalence, permutation, and gradient controls use 30 complexes across ten target groups at 4 angstrom. Intervals resample target groups. Residue-map correlations summarize atom-order and progressive-randomization controls after within-target averaging. These controls assess geometric correspondence and model dependence separately.
+
+\begin{thebibliography}{99}
+\bibitem{davis2011} Davis MI, Hunt JP, Herrgard S, Ciceri P, Wodicka LM, Pallares G, et al. Comprehensive analysis of kinase inhibitor selectivity. Nat Biotechnol. 2011;29(11):1046-1051. doi:10.1038/nbt.1990.
+
+\bibitem{deepdta2018} Öztürk H, Özgür A, Ozkirimli E. DeepDTA: deep drug-target binding affinity prediction. Bioinformatics. 2018;34(17):i821-i829. doi:10.1093/bioinformatics/bty593.
+
+\bibitem{widedta2019} Ozturk H, Ozkirimli E, Ozgur A. WideDTA: prediction of drug-target binding affinity. 2019. doi:10.48550/arXiv.1902.04166. Preprint, arXiv:1902.04166.
+
+\bibitem{graphdta2021} Nguyen T, Le H, Quinn TP, Nguyen T, Le TD, Venkatesh S. GraphDTA: predicting drug-target binding affinity with graph neural networks. Bioinformatics. 2021;37(8):1140-1147. doi:10.1093/bioinformatics/btaa921.
+
+\bibitem{dgraph2020} Jiang M, Li Z, Zhang S, Wang S, Wang X, Yuan Q, et al. Drug-target affinity prediction using graph neural network and contact maps. RSC Adv. 2020;10(35):20701-20712. doi:10.1039/d0ra02297g.
+
+\bibitem{mgraph2022} Yang Z, Zhong W, Zhao L, Yu-Chian Chen C. MGraphDTA: deep multiscale graph neural network for explainable drug-target binding affinity prediction. Chem Sci. 2022;13(3):816-833. doi:10.1039/d1sc05180f.
+
+\bibitem{fusion2022} Yuan W, Chen G, Chen CYC. FusionDTA: attention-based feature polymerizer and knowledge distillation for drug-target binding affinity prediction. Brief Bioinform. 2022;23:bbab506. doi:10.1093/bib/bbab506.
+
+\bibitem{ssm2023} Pei Q, Wu L, Zhu J, Xia Y, Xie S, Qin T, et al. Breaking the barriers of data scarcity in drug-target affinity prediction. Brief Bioinform. 2023;24:bbad386. doi:10.1093/bib/bbad386.
+
+\bibitem{nhgnn2023} He H, Chen G, Chen CYC. NHGNN-DTA: a node-adaptive hybrid graph neural network for interpretable drug-target binding affinity prediction. Bioinformatics. 2023;39:btad355. doi:10.1093/bioinformatics/btad355.
+
+\bibitem{hgtdp2024} Xiao X, Wang W, Xie J, Zhu L, Chen G, Li Z, et al. HGTDP-DTA: Hybrid Graph-Transformer with Dynamic Prompt for Drug-Target Binding Affinity Prediction. 2024. doi:10.48550/arXiv.2406.17697. Preprint, arXiv:2406.17697.
+
+\bibitem{hcaf2025} Li J, Yao L. HCAF-DTA: drug-target binding affinity prediction with cross-attention fused hypergraph neural networks. 2025. doi:10.48550/arXiv.2504.02014. Preprint version reviewed, arXiv:2504.02014v1.
+
+\bibitem{curvflow2026} Ma J, Yang Y, Zhao J, Zhao L. CurvFlow-DTA: dual-graph discrete Ricci curvature flow for drug-target affinity prediction. 2026. doi:10.48550/arXiv.2609.22862. Preprint, arXiv:2609.22862v1.
+
+\bibitem{esmc2024} EvolutionaryScale. ESM Cambrian: Revealing the mysteries of proteins with unsupervised learning. 2024. \url{https://www.evolutionaryscale.ai/blog/esm-cambrian}. Accessed 24 October 2026.
+
+\bibitem{esmcode} EvolutionaryScale. ESM software repository. 2024. \url{https://github.com/evolutionaryscale/esm}. Pinned revision fcc9d36f5fff97d9bb69a36e3252de61cc78c968; accessed 24 October 2026.
+
+\bibitem{light2023} Li H, Zhang R, Min Y, Ma D, Zhao D, Zeng J. A knowledge-guided pre-training framework for improving molecular representation learning. Nat Commun. 2023;14:7568. doi:10.1038/s41467-023-43214-1.
+
+\bibitem{conplex2023} Singh R, Sledzieski S, Bryson B, Cowen L, Berger B. Contrastive learning in protein language space predicts interactions between drugs and protein targets. Proc Natl Acad Sci U S A. 2023;120:e2220778120. doi:10.1073/pnas.2220778120.
+
+\bibitem{attention2019} Jain S, Wallace BC. Attention is not Explanation. Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 1 (Long and Short Papers). 2019:3543-3556. doi:10.18653/v1/n19-1357.
+
+\bibitem{sanity2018} Adebayo J, Gilmer J, Muelly M, Goodfellow I, Hardt M, Kim B. Sanity Checks for Saliency Maps. Advances in Neural Information Processing Systems. 2018. \url{https://papers.nips.cc/paper_files/paper/2018/hash/294a8ed24b1ad22ec2e7efea049b8737-Abstract.html}.
+
+\bibitem{deepdtagen2025} Shah PM, Zhu H, Lu Z, Wang K, Tang J, Li M. DeepDTAGen: a multitask deep learning framework for drug-target affinity prediction and target-aware drugs generation. Nat Commun. 2025;16:5021. doi:10.1038/s41467-025-59917-6.
+
+\bibitem{ho2020} Ho J, Jain A, Abbeel P. Denoising Diffusion Probabilistic Models. Advances in Neural Information Processing Systems. 2020. \url{https://arxiv.org/abs/2006.11239}.
+
+\bibitem{discrete2021} Austin J, Johnson DD, Ho J, Tarlow D, van den Berg R. Structured Denoising Diffusion Models in Discrete State-Spaces. Advances in Neural Information Processing Systems. 2021. \url{https://arxiv.org/abs/2107.03006}.
+
+\bibitem{morgan2010} Rogers D, Hahn M. Extended-Connectivity Fingerprints. J Chem Inf Model. 2010;50(5):742-754. doi:10.1021/ci100050t.
+
+\bibitem{bindingdb2007} Liu T, Lin Y, Wen X, Jorissen RN, Gilson MK. BindingDB: a web-accessible database of experimentally determined protein-ligand binding affinities. Nucleic Acids Res. 2007;35(Database):D198-D201. doi:10.1093/nar/gkl999.
+
+\bibitem{bemis1996} Bemis GW, Murcko MA. The Properties of Known Drugs. 1. Molecular Frameworks. J Med Chem. 1996;39(15):2887-2893. doi:10.1021/jm9602928.
+
+\bibitem{vina2021} Eberhardt J, Santos-Martins D, Tillack AF, Forli S. AutoDock Vina 1.2.0: New Docking Methods, Expanded Force Field, and Python Bindings. J Chem Inf Model. 2021;61(8):3891-3898. doi:10.1021/acs.jcim.1c00203.
+
+\bibitem{meeko} Forli laboratory. Meeko ligand preparation toolkit. 2026. \url{https://github.com/forlilab/Meeko}. Version 0.8.0; accessed 24 October 2026.
+
+\bibitem{posebusters2024} Buttenschoen M, Morris GM, Deane CM. PoseBusters: AI-based docking methods fail to generate physically valid poses or generalise to novel sequences. Chem Sci. 2024;15(9):3130-3139. doi:10.1039/d3sc04185a.
+
+\bibitem{pdb2000} Berman HM. The Protein Data Bank. Nucleic Acids Res. 2000;28(1):235-242. doi:10.1093/nar/28.1.235.
+
+\bibitem{pdb6yoj} Worldwide Protein Data Bank. PDB structure 6YOJ. 2020. doi:10.2210/pdb6YOJ/pdb. FAK1-P4N complex; accessed 24 October 2026.
+
+\bibitem{rdkit} RDKit contributors. RDKit Open source cheminformatics. 2026. \url{https://www.rdkit.org}. Version recorded in the reproducibility supplement; accessed 24 October 2026.
+\end{thebibliography}\end{document}
