@@ -229,3 +229,7 @@ The historical adapted-encoder experiments are distinct from these frozen-encode
 **Figure S6. Generated-compound preparation and pose checks.** Preparation fails for 55/90 selected instances. The 35 prepared instances yield 105 poses, 91 passing checks. Pose success is conditional on preparation.
 
 [Open figure](../figures/Supplementary_Figure_6_generated_docking.pdf)
+
+## Independent-benchmark runtime amendment
+
+Before any KIBA test scoring, the user requested a smaller execution budget after 24 completed epochs of the first validation fit. Every neural method now receives the same three learning rates at dropout 0.1 on official validation fold 0; three final seeds remain. Additional Davis analysis compares only the two leading fixed configurations across folds 1 and 2 with three seeds. It is not a full architecture-selection stability experiment. The original protocol, partial validation exposure, unchanged optimization settings, and preserved checkpoint identities remain in the public reference registration and runtime amendment. No new generator or docking runs were added.

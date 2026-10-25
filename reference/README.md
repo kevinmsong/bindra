@@ -13,9 +13,11 @@ Davis-adapted member states initialize new benchmark supervision.
 
 ## Independent benchmark
 
-`protocol.json` prespecifies official KIBA setting1 folds, six validation
-configurations per neural method, three validation folds and three final
-seeds. GraphDTA-GIN and MGraphDTA use pinned official source, checked against
+`protocol.json` specifies official KIBA setting1 folds, three learning rates
+at fixed dropout 0.1, one validation fold (official fold 0), and three final
+seeds. The runtime-budget amendment followed initial validation inspection
+and preceded every KIBA test prediction. All neural methods receive the same
+reduced tuning budget. GraphDTA-GIN and MGraphDTA use pinned official source, checked against
 `upstream_sources.json`; they are local reruns under this controlled protocol,
 not transcriptions of paper metrics. Optimizer, selection, input cap and
 normalization departures from upstream scripts are explicit. All models use
@@ -71,12 +73,22 @@ change. Training resumed from the saved optimizer/RNG state; no KIBA test
 predictions existed at the amendment. The registration preserves both protocol
 identities and the original/current I/O implementation hashes.
 
-Additional Davis fold confirmation uses folds 1 and 2, repeats the same six
-tuning configurations for every arm, and replicates each chosen configuration
-with three seeds, reusing its first tuning seed. This requires 128 unique
-validation fits and never scores Davis test labels. The original fold-0
-decision and historical test exposure remain disclosed. The command requires
-the separately archived full-sequence Davis feature store:
+Additional Davis confirmation compares only pooled BINDRA and BINDRA-iBAM
+on folds 1 and 2, with three seeds and their existing fold-0-selected
+learning rate 0.0003 and dropout 0.1. This requires 12 fits, with no new
+hyperparameter sweep and no repeated Davis test scoring. It tests the ranking
+of two fixed configurations, not eight-arm architecture-selection stability.
+The original fold-0 decision and historical exposure remain disclosed.
+
+`runtime_amendment.json` records the reduction from 212 to 36 neural fits
+(24 KIBA and 12 Davis) and 40 to 16 classical fits. The ongoing first fit's
+manifest, weights, optimizer, and RNG bytes were preserved after epoch 24.
+The active protocol controls the queue; a `policy_reuse.json` sidecar records
+compatibility with its original fitting policy. Optimization, source, data,
+seed, and model checks remain enforced on resume. No test metrics informed
+this user-requested runtime reduction.
+
+The command requires the separately archived full-sequence Davis feature store:
 
 ```powershell
 python -m reference.study --stage davis-stability --davis-features PATH_TO_DAVIS_FEATURES --out runs/reviewer-kiba

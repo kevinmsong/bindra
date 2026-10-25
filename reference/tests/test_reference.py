@@ -148,3 +148,43 @@ def test_transient_windows_file_lock_does_not_abort_checkpointing(tmp_path,monke
     assert len(calls)==3 and json.loads((tmp_path/'progress.json').read_text())=={'epoch':4}
     io.atomic_save({'epoch':4},tmp_path/'last.pt')
     assert torch.load(tmp_path/'last.pt',weights_only=False)['epoch']==4
+
+
+def test_schedule_only_amendment_preserves_existing_fit_identity(tmp_path):
+    from reference.study import compatible_fitting_policy,policy_digest
+    old={'schema':'v1','label_scale':'KIBA_score','max_epochs':200,'patience':15,'validation_folds':[0,1,2]}
+    new={**old,'schema':'v2','validation_folds':[0]}
+    folder=tmp_path/'fit';folder.mkdir();manifest=folder/'manifest.json';manifest.write_text(json.dumps({'policy':old}))
+    before=manifest.read_bytes()
+    with pytest.raises(ValueError,match='recorded'):compatible_fitting_policy(folder,new,tmp_path)
+    (tmp_path/'runtime_amendment.json').write_text(json.dumps({'old_policy_sha256':policy_digest(old),'new_policy_sha256':policy_digest(new)}))
+    assert compatible_fitting_policy(folder,new,tmp_path)==old and manifest.read_bytes()==before
+    assert json.loads((folder/'policy_reuse.json').read_text())['optimization_unchanged']
+    with pytest.raises(ValueError,match='optimization'):compatible_fitting_policy(folder,{**new,'max_epochs':80},tmp_path)
+    with pytest.raises(ValueError,match='identity'):compatible_fitting_policy(folder,{**new,'schema':'unrecorded'},tmp_path)
+
+
+def test_trimmed_davis_confirmation_uses_frozen_parameters_and_twelve_fits(tmp_path,monkeypatch):
+    import reference.study as study
+    from reference.io import write_json
+    frame=pd.DataFrame({'sequence':['AC']*5,'smiles':['CC']*5,'pair_id':list('abcde'),'label':[5.]*5})
+    folds=[np.array([i]) for i in range(5)]
+    monkeypatch.setattr(study,'official_dataset',lambda *a,**k:(frame,folds,np.array([],int)))
+    class Store:
+        def __init__(self,path):pass
+        def preload(self,frame,device):return {}
+    monkeypatch.setattr(study,'TokenStore',Store);runs=[]
+    def fakefit(name,provider,training,validation,folder,**kw):
+        marker=folder/'complete.json'
+        if marker.exists():return
+        assert kw['parameters']=={'learning_rate':.0003,'dropout':.1}
+        assert not set(training.pair_id)&set(validation.pair_id)
+        runs.append((str(folder),kw['seed']))
+        write_json(marker,{'best_validation_mse':.2,'best_epoch':1,'epochs':1})
+    monkeypatch.setattr(study,'fit',fakefit)
+    policy=json.loads((Path(__file__).parents[1]/'protocol.json').read_text())
+    study.davis_stability(tmp_path,policy,'unused','unused',torch.device('cpu'))
+    assert len(runs)==12
+    result=json.loads((tmp_path/'davis_stability/complete.json').read_text())
+    assert result['unique_validation_fits']==12 and result['foldwise_hyperparameters_retuned'] is False
+    assert not result['test_predictions_created']

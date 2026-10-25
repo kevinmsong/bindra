@@ -1,30 +1,87 @@
 {
-  "schema": "bindra-independent-kiba-v1",
+  "schema": "bindra-independent-kiba-v2-trimmed",
   "dataset": "kiba",
   "label_scale": "KIBA_score",
   "source": "hkmztrk/DeepDTA official setting1 files",
-  "primary_selection": "mean validation MSE across official training folds 0, 1, and 2",
-  "validation_folds": [0, 1, 2],
-  "tuning_seed": 20261001,
-  "final_seeds": [20261001, 20261002, 20261003],
-  "neural_models": ["bindra_pooled", "bindra_attention", "graphdta_gin", "mgraphdta"],
-  "classical_models": ["ridge", "random_forest"],
-  "neural_grid": [
-    {"learning_rate": 0.0001, "dropout": 0.1},
-    {"learning_rate": 0.0001, "dropout": 0.2},
-    {"learning_rate": 0.0003, "dropout": 0.1},
-    {"learning_rate": 0.0003, "dropout": 0.2},
-    {"learning_rate": 0.001, "dropout": 0.1},
-    {"learning_rate": 0.001, "dropout": 0.2}
+  "primary_selection": "validation MSE on official training fold 0; runtime-budget amendment before any KIBA test scoring",
+  "validation_folds": [
+    0
   ],
-  "ridge_alphas": [1, 10, 100, 1000, 10000, 100000],
+  "tuning_seed": 20261001,
+  "final_seeds": [
+    20261001,
+    20261002,
+    20261003
+  ],
+  "neural_models": [
+    "bindra_pooled",
+    "bindra_attention",
+    "graphdta_gin",
+    "mgraphdta"
+  ],
+  "classical_models": [
+    "ridge",
+    "random_forest"
+  ],
+  "neural_grid": [
+    {
+      "learning_rate": 0.0001,
+      "dropout": 0.1
+    },
+    {
+      "learning_rate": 0.0003,
+      "dropout": 0.1
+    },
+    {
+      "learning_rate": 0.001,
+      "dropout": 0.1
+    }
+  ],
+  "ridge_alphas": [
+    1,
+    10,
+    100,
+    1000,
+    10000,
+    100000
+  ],
   "forest_grid": [
-    {"n_estimators": 128, "max_depth": 16, "min_samples_leaf": 1, "max_features": 0.1},
-    {"n_estimators": 128, "max_depth": 24, "min_samples_leaf": 1, "max_features": 0.1},
-    {"n_estimators": 128, "max_depth": null, "min_samples_leaf": 1, "max_features": 0.1},
-    {"n_estimators": 128, "max_depth": 16, "min_samples_leaf": 3, "max_features": 0.1},
-    {"n_estimators": 128, "max_depth": 24, "min_samples_leaf": 3, "max_features": 0.1},
-    {"n_estimators": 128, "max_depth": null, "min_samples_leaf": 3, "max_features": 0.1}
+    {
+      "n_estimators": 128,
+      "max_depth": 16,
+      "min_samples_leaf": 1,
+      "max_features": 0.1
+    },
+    {
+      "n_estimators": 128,
+      "max_depth": 24,
+      "min_samples_leaf": 1,
+      "max_features": 0.1
+    },
+    {
+      "n_estimators": 128,
+      "max_depth": null,
+      "min_samples_leaf": 1,
+      "max_features": 0.1
+    },
+    {
+      "n_estimators": 128,
+      "max_depth": 16,
+      "min_samples_leaf": 3,
+      "max_features": 0.1
+    },
+    {
+      "n_estimators": 128,
+      "max_depth": 24,
+      "min_samples_leaf": 3,
+      "max_features": 0.1
+    },
+    {
+      "n_estimators": 128,
+      "max_depth": null,
+      "min_samples_leaf": 3,
+      "max_features": 0.1
+    }
   ],
   "max_epochs": 200,
   "patience": 15,
@@ -37,14 +94,34 @@
   "ligand_checkpoint_sha256": "97f71a955dc658a4d33c6e931cdd8f7e4f5fe69f8db748224f67b202f41e7630",
   "protein_weights_sha256": "7855e03269e5241e11bbb879108b888ffe10e625c730272eff80f99bf7cb8538",
   "test_gate": "No test predictions or metrics until all model selections, durations and exposure audit are frozen. No change to the protocol after seeing test metrics.",
-  "exposure_strata": ["ligand pretraining exposed", "ligand pretraining unexposed", "Davis supervised pair exposed", "Davis supervised pair unexposed"],
+  "exposure_strata": [
+    "ligand pretraining exposed",
+    "ligand pretraining unexposed",
+    "Davis supervised pair exposed",
+    "Davis supervised pair unexposed"
+  ],
   "reporting": "Per-seed metrics and equal-weight three-seed prediction ensembles separately; deterministic ridge once. Do not compare KIBA magnitudes with pKd.",
   "davis_fold_stability": {
-    "additional_folds": [1, 2],
-    "arms": ["A", "B", "C", "D", "E", "F", "G", "C-matched"],
-    "seeds": [20261001, 20261002, 20261003],
-    "selection_scope": "Repeat all six tuning configurations per arm and fold with tuning seed 20261001; replicate each chosen configuration with seeds 20261002 and 20261003. Mean three-seed validation MSE selects the architecture within each fold. Original full-sequence frozen features; no test scoring.",
-    "planned_unique_validation_fits": 128,
+    "mode": "fixed_configuration_confirmation",
+    "additional_folds": [
+      1,
+      2
+    ],
+    "arms": [
+      "C-matched",
+      "F"
+    ],
+    "seeds": [
+      20261001,
+      20261002,
+      20261003
+    ],
+    "fixed_parameters": {
+      "learning_rate": 0.0003,
+      "dropout": 0.1
+    },
+    "selection_scope": "Confirm the two leading architectures at their existing Davis fold-0-selected hyperparameters on folds 1 and 2, with three seeds. No new hyperparameter search, no eight-arm selection-stability claim, and no test scoring.",
+    "planned_unique_validation_fits": 12,
     "test_evaluation": false
   }
 }

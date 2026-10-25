@@ -6,6 +6,7 @@ from dataclasses import asdict
 from pathlib import Path
 import argparse
 import gc
+import hashlib
 import json
 import math
 import os
@@ -21,6 +22,34 @@ from .train import fit,make_model,predict,metrics
 
 ROOT=Path(__file__).resolve().parents[1]
 DEFAULT_OUT=ROOT/'runs/manuscript/20261024/independent-evaluation'
+
+
+def policy_digest(policy):
+    return hashlib.sha256(json.dumps(policy,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+
+
+def compatible_fitting_policy(folder,policy,out):
+    """Keep immutable fit identities when only the outer execution schedule changes.
+
+    The trainer still checks model, data, seed, parameters, and training-source
+    identities. Existing checkpoint bytes and optimization settings are untouched.
+    """
+    path=Path(folder)/'manifest.json'
+    if not path.exists():return policy
+    original=json.loads(path.read_text())['policy']
+    if original==policy:return policy
+    allowed={'schema','primary_selection','validation_folds','neural_grid','davis_fold_stability'}
+    differences={key for key in original.keys()|policy.keys() if original.get(key)!=policy.get(key)}
+    if differences-allowed:raise ValueError('Amendment changes fit optimization: '+str(sorted(differences-allowed)))
+    amendment=Path(out)/'runtime_amendment.json'
+    if not amendment.exists():raise ValueError('Schedule amendment must be recorded before fit reuse')
+    record=json.loads(amendment.read_text())
+    if record['old_policy_sha256']!=policy_digest(original) or record['new_policy_sha256']!=policy_digest(policy):
+        raise ValueError('Schedule amendment identity mismatch')
+    freeze(Path(folder)/'policy_reuse.json',{'old_policy_sha256':policy_digest(original),
+        'current_policy_sha256':policy_digest(policy),'changed_schedule_fields':sorted(differences),
+        'optimization_unchanged':True,'original_checkpoint_metadata_preserved':True})
+    return original
 
 
 def lock_protocol(out,config,data_root):
@@ -76,7 +105,8 @@ def neural(out,policy,frame,folds,device,feature_store,sources):
                 folder=out/name/'tuning'/f'configuration-{configuration:02d}'/f'fold-{fold}'
                 write_json(out/'status.json',{'state':'training','stage':'independent_KIBA_tuning','model':name,
                     'configuration':configuration,'fold':fold,'run_directory':str(folder),'pid':os.getpid(),'at':timestamp()})
-                fit(name,provider,training,validation,folder,parameters=parameters,seed=policy['tuning_seed'],policy=policy,device=device)
+                fit_policy=compatible_fitting_policy(folder,policy,out)
+                fit(name,provider,training,validation,folder,parameters=parameters,seed=policy['tuning_seed'],policy=fit_policy,device=device)
                 result=json.loads((folder/'complete.json').read_text())
                 rows.append({'configuration':configuration,'fold':fold,'validation_mse':result['best_validation_mse'],'best_epoch':result['best_epoch']})
         table=pd.DataFrame(rows);chosen=int(table.groupby('configuration').validation_mse.mean().idxmin())
@@ -170,6 +200,7 @@ def davis_stability(out,policy,data_root,feature_store,device):
     frame,folds,_=official_dataset('davis',data_root)
     provider=TokenStore(feature_store);subpolicy={**policy,'label_scale':'pKd'};rows=[]
     write_json(out/'davis_stability/cache_profile.json',provider.preload(frame,device))
+    confirmation=policy['davis_fold_stability'].get('mode')=='fixed_configuration_confirmation'
     for fold in policy['davis_fold_stability']['additional_folds']:
         for arm in policy['davis_fold_stability']['arms']:
             from .models import FollowupModel,FollowupModelConfig
@@ -178,7 +209,8 @@ def davis_stability(out,policy,data_root,feature_store,device):
                 def model(self,dropout):return FollowupModel(FollowupModelConfig(arm=arm,dropout=dropout,label_scale='pKd'))
             training=frame.iloc[np.concatenate([v for i,v in enumerate(folds) if i!=fold])];validation=frame.iloc[folds[fold]]
             tuning=[]
-            for configuration,parameters in enumerate(policy['neural_grid']):
+            grid=[policy['davis_fold_stability']['fixed_parameters']] if confirmation else policy['neural_grid']
+            for configuration,parameters in enumerate(grid):
                 folder=out/'davis_stability'/f'fold-{fold}'/arm/'tuning'/f'configuration-{configuration:02d}'
                 write_json(out/'status.json',{'state':'training','stage':'Davis_foldwise_retuning','fold':fold,'arm':arm,
                     'configuration':configuration,'run_directory':str(folder),'pid':os.getpid(),'at':timestamp()})
@@ -186,9 +218,11 @@ def davis_stability(out,policy,data_root,feature_store,device):
                     seed=policy['tuning_seed'],policy=subpolicy,device=device)
                 record=json.loads((folder/'complete.json').read_text());tuning.append({'configuration':configuration,**record})
             chosen=min(tuning,key=lambda row:(row['best_validation_mse'],row['configuration']))['configuration']
-            parameters=policy['neural_grid'][chosen]
+            parameters=grid[chosen]
             freeze(out/'davis_stability'/f'fold-{fold}'/arm/'selection.json',{'selection_scope':'validation_only',
-                'configuration':chosen,'parameters':parameters,'tuning_results':tuning})
+                'configuration':chosen,'parameters':parameters,'tuning_results':tuning,
+                'hyperparameters_selected_on_this_fold':not confirmation,
+                'comparison_scope':'Fixed fold-0-selected settings; two leading architectures only' if confirmation else 'All declared tuning configurations'})
             for seed in policy['davis_fold_stability']['seeds']:
                 folder=out/'davis_stability'/f'fold-{fold}'/arm/('tuning/configuration-'+f'{chosen:02d}' if seed==policy['tuning_seed'] else f'seed-{seed}')
                 write_json(out/'status.json',{'state':'training','stage':'Davis_additional_validation','fold':fold,'arm':arm,'seed':seed,'run_directory':str(folder),'pid':os.getpid(),'at':timestamp()})
@@ -197,8 +231,9 @@ def davis_stability(out,policy,data_root,feature_store,device):
                 pd.DataFrame(rows).to_csv(out/'davis_stability/results.csv',index=False)
     means=pd.DataFrame(rows).groupby(['fold','arm']).validation_mse.mean().reset_index()
     means['rank']=means.groupby('fold').validation_mse.rank(method='min');means.to_csv(out/'davis_stability/ranks.csv',index=False)
-    write_json(out/'davis_stability/complete.json',{'selected_configuration_seed_scores':len(rows),'unique_validation_fits':128,
-        'foldwise_hyperparameters_retuned':True,'test_predictions_created':False,'at':timestamp()})
+    write_json(out/'davis_stability/complete.json',{'selected_configuration_seed_scores':len(rows),
+        'unique_validation_fits':policy['davis_fold_stability']['planned_unique_validation_fits'],
+        'foldwise_hyperparameters_retuned':not confirmation,'test_predictions_created':False,'at':timestamp()})
 
 
 def main():

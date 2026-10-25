@@ -1,0 +1,30 @@
+{
+  "at": "2026-10-25T03:58:58.925706+00:00",
+  "reason": "User requested trimming less-essential remaining work to reduce runtime.",
+  "previous_protocol_sha256": "6ce9ea29fad46aeab6f550f3f45ea4ac46c0217a2aeee3d4ccc6e61bea46211f",
+  "current_protocol_sha256": "187bee53498938477c6e8ec124fcd93c51be5e6f1bd63f5e467e739e7a265cc9",
+  "old_policy_sha256": "9bbd3d62580e5a4976ca5588cd1a1050e021b8321b79aea106573ae4dfc34965",
+  "new_policy_sha256": "1f26cf4b072e9727772bfd6a7beddd708563f39595ac67d373ec9efc6fa2b464",
+  "old_neural_fits": 212,
+  "new_neural_fits": 36,
+  "old_classical_fits": 40,
+  "new_classical_fits": 16,
+  "KIBA": "All four neural methods receive the same three learning rates at dropout 0.1 on official validation fold 0. Three final seeds remain.",
+  "Davis": "Two leading architectures, fixed existing hyperparameters, two additional folds, three seeds: 12 confirmation fits. No full eight-arm retuning/stability claim.",
+  "optimization_unchanged": true,
+  "test_predictions_created": false,
+  "validation_results_inspected": true,
+  "validation_exposure_at_amendment": {
+    "model": "bindra_pooled",
+    "configuration": 0,
+    "fold": 0,
+    "completed_epochs": 24,
+    "best_validation_mse": 0.1859628258517534
+  },
+  "existing_fit_checkpoints_sha256": {
+    "manifest.json": "c60a31969841769ad7d81e550a08ce9125d63966e2d40357176fb7e513b0fcb2",
+    "last.pt": "2b4f2393dc636c5c30c7d7900aa37fd3a11c537f5d3f795ee193b064de919e62",
+    "best.pt": "7438bad3cb7f2c3f98e8489f3680f9f6491b4f9cd2657b22474d0d9cf92a7f78"
+  },
+  "preservation": "Original fit manifest, tensor states, optimizer and RNG bytes preserved; schedule compatibility recorded separately."
+}

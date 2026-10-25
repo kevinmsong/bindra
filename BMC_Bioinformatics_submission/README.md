@@ -51,7 +51,7 @@ No table is flattened into an image.
 
 ## Reviewer revision
 
-The main prose is 6068 words versus 6711 previously, a 9.6% reduction using
+The main prose is 6062 words versus 6711 previously, a 9.7% reduction using
 the same source-body counter. The paper centers on pooled versus attention
 prediction. Main tables include crossed-bootstrap intervals, paired contrasts,
 detection-plateau diagnostics, within-target ranking, and absolute attention
@@ -73,3 +73,13 @@ assets, including large raw maps, SDFs and checkpoints, in an appropriate
 repository with access/license conditions. The supplied local inventory is not
 a public DOI. Confirm all authors' approval and follow the final checklist.
 The current journal guidance is linked in `submission_checklist.md`.
+
+## Reduced execution budget
+
+The active protocol now schedules 36 neural fits rather than 212: 24 KIBA fits
+and 12 fixed-configuration Davis confirmations. KIBA uses three shared learning
+rates, dropout 0.1, and one validation fold; three final seeds remain. The two
+leading Davis models retain their existing selected settings across two extra
+folds. The public runtime amendment discloses initial validation exposure and
+preserves the ongoing fit. There is no full eight-arm stability claim and no
+new generation/docking campaign.
