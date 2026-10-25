@@ -1,5 +1,5 @@
 {
-  "protocol_sha256": "9c867cf868f455310f772d275fd6d5938b15f87f316028e956029db176a074c5",
+  "protocol_sha256": "6ce9ea29fad46aeab6f550f3f45ea4ac46c0217a2aeee3d4ccc6e61bea46211f",
   "frozen_at": "2026-10-25T02:57:32.613562+00:00",
   "policy": {
     "schema": "bindra-independent-kiba-v1",
@@ -154,12 +154,27 @@
     "reference\\__init__.py": "6a6e53d37f533c13654263df58fc6897a8ddd06bdc1889a9bda0e350383e8694",
     "reference\\data.py": "3369d040f333635ce22d812e5d80b437ddc476f7f12a2e9cbc68cb39ae92b9a2",
     "reference\\exposure.py": "2248012873c4740a586db4d22a871d0756fa31b35fdc19ee1f24407324f3abfe",
-    "reference\\io.py": "3202a5cd6971d2632c208d79d26f7aba9c4e79c74b0300fa77e8edb69501e4eb",
+    "reference\\io.py": "8268eccfc7136153cbf4252766c963dd6e5a69960ba20f9090300e525d7066c7",
     "reference\\lease.py": "ff5d8da1ba212b70ca190ab86df37669a7fbd1f3fadb7708e201498b896c6758",
     "reference\\models.py": "46b969ddf33c7dbc9a45b6c23be97fabee9805f0f1cb05d2706805fc2a3698bb",
     "reference\\study.py": "b6fe2244480aae7282850b647998d4aadbf418a51836ed130c6ab20a2af950df",
     "reference\\train.py": "a7ae065b9beb6c9e49be040b119b87cd7aaeaa08cf786c4deda23660a91305d0"
   },
   "historical_test_exposure": "KIBA was prepared/discussed previously. No completed local KIBA predictions found in the recorded runs audit. This is an independent dataset, not a claim of historically secret test labels.",
-  "status": "Prespecified before new KIBA test predictions; experiments running, results not yet available."
+  "status": "Prespecified before new KIBA test predictions; experiments running, results not yet available.",
+  "original_protocol_sha256": "9c867cf868f455310f772d275fd6d5938b15f87f316028e956029db176a074c5",
+  "implementation_amendment": {
+    "at": "2026-10-25T03:18:34.905153+00:00",
+    "reason": "Retry transient Windows atomic-replace file-sharing errors; no model, data, labels, hyperparameters or selection changes.",
+    "original_protocol_sha256": "9c867cf868f455310f772d275fd6d5938b15f87f316028e956029db176a074c5",
+    "current_protocol_sha256": "6ce9ea29fad46aeab6f550f3f45ea4ac46c0217a2aeee3d4ccc6e61bea46211f",
+    "changed_implementation": [
+      "reference\\io.py"
+    ],
+    "original_io_sha256": "3202a5cd6971d2632c208d79d26f7aba9c4e79c74b0300fa77e8edb69501e4eb",
+    "current_io_sha256": "8268eccfc7136153cbf4252766c963dd6e5a69960ba20f9090300e525d7066c7",
+    "completed_tuning_epochs_before_amendment": 4,
+    "test_predictions_created": false,
+    "resume": "last.pt epoch 4, optimizer and RNG state"
+  }
 }

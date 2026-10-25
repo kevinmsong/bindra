@@ -1,0 +1,14 @@
+{
+  "at": "2026-10-25T03:18:34.905153+00:00",
+  "reason": "Retry transient Windows atomic-replace file-sharing errors; no model, data, labels, hyperparameters or selection changes.",
+  "original_protocol_sha256": "9c867cf868f455310f772d275fd6d5938b15f87f316028e956029db176a074c5",
+  "current_protocol_sha256": "6ce9ea29fad46aeab6f550f3f45ea4ac46c0217a2aeee3d4ccc6e61bea46211f",
+  "changed_implementation": [
+    "reference\\io.py"
+  ],
+  "original_io_sha256": "3202a5cd6971d2632c208d79d26f7aba9c4e79c74b0300fa77e8edb69501e4eb",
+  "current_io_sha256": "8268eccfc7136153cbf4252766c963dd6e5a69960ba20f9090300e525d7066c7",
+  "completed_tuning_epochs_before_amendment": 4,
+  "test_predictions_created": false,
+  "resume": "last.pt epoch 4, optimizer and RNG state"
+}

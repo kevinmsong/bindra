@@ -134,3 +134,17 @@ def test_prediction_batching_restores_original_order():
         def forward(self,x):return x*2
     frame=pd.DataFrame({'sequence':['A'*n for n in [4,1,8,2,3]],'smiles':['CC']*5,'value':[9,4,1,8,3]})
     assert np.array_equal(predict(Model(),Provider(),frame,torch.device('cpu'),2),frame.value.to_numpy()*2)
+
+
+def test_transient_windows_file_lock_does_not_abort_checkpointing(tmp_path,monkeypatch):
+    import reference.io as io
+    original=io.os.replace;calls=[]
+    def transient(source,destination):
+        calls.append(str(destination))
+        if len(calls)<=2:raise PermissionError('Temporary file-sharing lock')
+        return original(source,destination)
+    monkeypatch.setattr(io.os,'replace',transient);monkeypatch.setattr(io.time,'sleep',lambda seconds:None)
+    io.write_json(tmp_path/'progress.json',{'epoch':4})
+    assert len(calls)==3 and json.loads((tmp_path/'progress.json').read_text())=={'epoch':4}
+    io.atomic_save({'epoch':4},tmp_path/'last.pt')
+    assert torch.load(tmp_path/'last.pt',weights_only=False)['epoch']==4

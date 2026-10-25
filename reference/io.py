@@ -3,6 +3,7 @@ from pathlib import Path
 import hashlib
 import json
 import os
+import time
 import torch
 
 
@@ -16,10 +17,21 @@ def sha256(path):
 def timestamp():return datetime.now(timezone.utc).isoformat()
 
 
+def replace_with_retry(source,destination):
+    """Readers and file-sync clients can transiently deny Windows replacement."""
+    for attempt in range(12):
+        try:
+            os.replace(source,destination)
+            return
+        except PermissionError:
+            if attempt==11:raise
+            time.sleep(min(.02*2**attempt,.5))
+
+
 def write_json(path,value):
     path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
     temp=path.with_suffix(path.suffix+'.tmp')
-    temp.write_text(json.dumps(value,indent=2,allow_nan=False),encoding='utf-8');os.replace(temp,path)
+    temp.write_text(json.dumps(value,indent=2,allow_nan=False),encoding='utf-8');replace_with_retry(temp,path)
 
 
 def freeze(path,value):
@@ -33,4 +45,4 @@ def freeze(path,value):
 
 def atomic_save(value,path):
     path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
-    temp=path.with_suffix(path.suffix+'.tmp');torch.save(value,temp);os.replace(temp,path)
+    temp=path.with_suffix(path.suffix+'.tmp');torch.save(value,temp);replace_with_retry(temp,path)

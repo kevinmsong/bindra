@@ -64,6 +64,13 @@ checkpointed. Resume requires matching data, configuration and implementation.
 Run only one GPU worker at a time. Runtime estimates require profiling actual
 fits; maximum epoch counts are not an ETA.
 
+`implementation_amendment.json` records an I/O-only correction after four
+completed tuning epochs: atomic file replacement retries transient Windows
+sharing locks. Model, partition, hyperparameter, and selection rules did not
+change. Training resumed from the saved optimizer/RNG state; no KIBA test
+predictions existed at the amendment. The registration preserves both protocol
+identities and the original/current I/O implementation hashes.
+
 Additional Davis fold confirmation uses folds 1 and 2, repeats the same six
 tuning configurations for every arm, and replicates each chosen configuration
 with three seeds, reusing its first tuning seed. This requires 128 unique
