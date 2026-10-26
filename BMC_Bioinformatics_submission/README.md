@@ -4,7 +4,7 @@ Start with `manuscript_revised.pdf`. The selected title is **BINDRA: evaluating
 pooled fusion and interaction attention for protein-ligand affinity prediction**.
 
 This minimal public snapshot includes the manuscript PDF, editable Markdown and
-LaTeX, bibliography, main table sources, five main figure PDF/SVG pairs, and
+LaTeX, bibliography, main table sources, six main figure PDF/SVG pairs, and
 supplementary methods with their table and figure dependencies. The compact
 [reference implementation](../reference/README.md) is provided separately.
 
@@ -34,10 +34,18 @@ pdflatex -interaction=nonstopmode -halt-on-error Additional_file_1_supplement.te
 pdflatex -interaction=nonstopmode -halt-on-error Additional_file_1_supplement.tex
 ```
 
-Main figures are separate files, as described in the figure legends. Supplementary
-LaTeX embeds the included supplementary figure PDFs. Compilation does not run
+The article PDF embeds all six main figures with their captions, including the
+FAK1-P4N iBAM and bond-map case study. Figure PDF/SVG files are also provided
+separately. Main and supplementary LaTeX require the included figure PDFs. Compilation does not run
 training, sampling, docking, or new analyses. American English is used in authored
 prose, with no em dashes. The main manuscript includes a compact glossary.
+
+The small `tables/fak_case_*.csv` exports contain both attention directions,
+the physical bond map, bond weights, and construct/PDB residue mappings.
+`provenance/fak_case_sources.json` records source identities and display rules.
+`source/render_fak_case.py` renders from the separately archived frozen attention
+arrays and requires NumPy, pandas, scikit-learn, RDKit, Matplotlib, and Pillow.
+It performs no model inference or training.
 
 ## Assets and author review
 

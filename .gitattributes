@@ -1,0 +1,6 @@
+# Preserve exact bytes of checksum-bound scientific case exports.
+BMC_Bioinformatics_submission/figures/Figure_3_Davis_errors.svg -text
+BMC_Bioinformatics_submission/figures/Figure_6_FAK1_case.svg -text
+BMC_Bioinformatics_submission/figures/Supplementary_Figure_1_FAK_contacts.svg -text
+BMC_Bioinformatics_submission/tables/fak_case_*.csv -text
+BMC_Bioinformatics_submission/source/render_fak_case.py -text

@@ -1,0 +1,104 @@
+{
+  "figure": "Figure_3_Davis_errors",
+  "inches": [
+    7.1,
+    5.15
+  ],
+  "layout": "Square prediction panel at left; plateau and entity diagnostics stacked at right; dedicated colorbar axis.",
+  "axes_fractional_bounds": [
+    [
+      0.09,
+      0.315,
+      0.39,
+      0.5376699029126215
+    ],
+    [
+      0.7,
+      0.635,
+      0.27,
+      0.235
+    ],
+    [
+      0.7,
+      0.245,
+      0.27,
+      0.235
+    ]
+  ],
+  "prediction_axis_width_height_ratio": 0.9999999999999998,
+  "identity_line_display_slope": 0.9999999999999999,
+  "identical_prediction_axis_limits": [
+    [
+      4.7,
+      11.0
+    ],
+    [
+      4.7,
+      11.0
+    ]
+  ],
+  "n_pairs": 5010,
+  "plateau_pairs": 3468,
+  "above_plateau_pairs": 1542,
+  "n_ligands": 68,
+  "n_sequences": 379,
+  "source_sha256": "6886daf77b1415d7fadbe5bb920170b74b6290fa8a2160c8fb9d88a49aa3bc7f",
+  "prediction_values_unchanged": true,
+  "palette": {
+    "magnitude": "viridis",
+    "plateau": "#0072B2",
+    "above_plateau": "#D55E00"
+  },
+  "line_style_redundancy": true,
+  "vector_data_in_PDF_and_SVG": true,
+  "artifacts": {
+    "pdf": {
+      "path": "figures\\Figure_3_Davis_errors.pdf",
+      "sha256": "70f70a76757d4d53d7ad0dcbab62c47785ec388a4f75339661a659391fba1757",
+      "bytes": 23754
+    },
+    "svg": {
+      "path": "figures\\Figure_3_Davis_errors.svg",
+      "sha256": "d702d218e134fd51975f890fc9413b5b52f2c1da41910dca955612ee7a98cdc6",
+      "bytes": 71144
+    },
+    "png": {
+      "path": "figures\\Figure_3_Davis_errors.png",
+      "sha256": "2d0ffd8187a39b2796a9991d7613dc8acd56f6be6ce9197442acafc0b740a906",
+      "bytes": 586050
+    },
+    "tiff": {
+      "path": "figures\\Figure_3_Davis_errors.tiff",
+      "sha256": "b4efc019d8f01555e8730125645155199ef30815defc33a626efdda90b4d6592",
+      "bytes": 1463046
+    }
+  },
+  "geometry_check": {
+    "minimum_font_pt": 8.0,
+    "clipped_text": [],
+    "overlapping_text": []
+  },
+  "raster_metadata": {
+    "png": {
+      "pixels": [
+        4260,
+        3090
+      ],
+      "dpi": [
+        599.9988,
+        599.9988
+      ]
+    },
+    "tiff": {
+      "pixels": [
+        4260,
+        3090
+      ],
+      "dpi": [
+        600.0,
+        600.0
+      ]
+    }
+  },
+  "visual_review": "Preview inspected at final figure proportions; no clipped or overlapping labels; opaque legend avoids zero-reference line interference."
+}

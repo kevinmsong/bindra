@@ -33,6 +33,7 @@ docking results do not establish causal binding mechanisms or experimental bindi
 - [Readable manuscript source](BMC_Bioinformatics_submission/manuscript.md)
 - [Supplementary methods and analyses](BMC_Bioinformatics_submission/additional_files/Additional_file_1_supplement_revised.pdf)
 - [Architecture diagram](BMC_Bioinformatics_submission/figures/Figure_1_architecture.svg)
+- [FAK1-P4N iBAM and bond-map case](BMC_Bioinformatics_submission/figures/Figure_6_FAK1_case.pdf)
 - [Reference code and usage](reference/README.md)
 - [Public release scope](BMC_Bioinformatics_submission/PUBLIC_RELEASE.md)
 
