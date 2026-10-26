@@ -1,0 +1,27 @@
+\begin{table}[htbp]\centering\begin{singlespace}\small\setlength{\tabcolsep}{3pt}\renewcommand{\arraystretch}{1.3}
+\caption{Author-reported Davis results for all reviewed model variants}
+\begin{tabular}{>{\raggedright\arraybackslash}p{0.35\linewidth}>{\raggedright\arraybackslash}p{0.08\linewidth}>{\raggedright\arraybackslash}p{0.1\linewidth}>{\raggedright\arraybackslash}p{0.1\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}}
+\toprule
+\textbf{Method} & \textbf{Year} & \textbf{MSE} & \textbf{CI} & \textbf{Qualification}\\\midrule
+DeepDTA \citep{deepdta2018} & 2018 & 0.261 & 0.878 & A\\
+WideDTA \citep{widedta2019} & 2019 & 0.262 & 0.886 & B\\
+DGraphDTA \citep{dgraph2020} & 2020 & 0.202 & 0.904 & C\\
+GraphDTA (GAT) \citep{graphdta2021} & 2021 & 0.232 & 0.892 & A\\
+GraphDTA (GAT\_GCN) \citep{graphdta2021} & 2021 & 0.245 & 0.881 & A\\
+GraphDTA (GCN) \citep{graphdta2021} & 2021 & 0.254 & 0.880 & A\\
+GraphDTA (GIN) \citep{graphdta2021} & 2021 & 0.229 & 0.893 & A\\
+FusionDTA \citep{fusion2022} & 2022 & 0.208 & 0.913 & B\\
+FusionDTA (KD, large) \citep{fusion2022} & 2022 & 0.205 & 0.914 & B\\
+MGraphDTA \citep{mgraph2022} & 2022 & 0.207 & 0.900 & B\\
+MFR-DTA \citep{mfr2023} & 2023 & 0.221 & 0.905 & C\\
+NHGNN-DTA \citep{nhgnn2023} & 2023 & 0.196 & 0.914 & D1\\
+SSM-DTA \citep{ssm2023} & 2023 & 0.219 & 0.890 & D2\\
+HGTDP-DTA \citep{hgtdp2024} & 2024 & 0.142 & 0.910 & C, preprint\\
+MDF-DTA \citep{mdf2024} & 2024 & 0.172 & 0.912 & C\\
+ProSmith \citep{prosmith2024} & 2024 & 0.186 & 0.911 & D1\\
+DeepDTAGen \citep{deepdtagen2025} & 2025 & 0.214 & 0.890 & B\\
+HCAF-DTA \citep{hcaf2025} & 2025 & 0.198 & 0.908 & C, preprint\\
+CurvFlow-DTA \citep{curvflow2026} & 2026 & 0.185 & 0.902 & C, preprint\\
+\bottomrule\end{tabular}\par\vspace{6pt}
+{\raggedright\footnotesize All 19 values are author-reported, not local reruns. A: official fold files verified, selection and aggregation qualified; the released GraphDTA training script includes test-based selection. B: exact fold identity, selection or aggregation not fully verified; WideDTA is a preprint version. C: additional structural inputs, binding-site supervision or affinity-derived graphs; not input-matched. D1: alternate random 80/10/10 settings. D2: random 70/10/20 split. Exact split and resource differences are detailed in the source-linked registry. Preprint labels refer to the versions reviewed. BINDRA uses external pretraining and prediction averaging; no cross-paper significance or universal superiority claim is made.\par}
+\end{singlespace}\end{table}

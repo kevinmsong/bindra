@@ -1,4 +1,4 @@
-Arm,Downstream architecture,Fitted parameters,Mean MSE,Seed SD,Refit epochs
+Model,Prediction architecture,Fitted parameters,Mean MSE,Seed SD,Refit epochs
 A,Protein only,347843,0.71282,0.00081,28
 B,Ligand only,348035,0.62299,0.00093,28
 C,Pooled concatenation,695365,0.23409,0.00201,72

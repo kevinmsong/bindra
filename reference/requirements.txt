@@ -1,0 +1,12 @@
+# Reference checks and downstream training utilities. Python 3.12.
+# Install a CUDA-enabled torch build separately when GPU execution is needed.
+torch>=2.7
+numpy>=1.26
+pandas>=2.2
+pyarrow>=16.0
+scipy>=1.13
+scikit-learn>=1.5
+rdkit>=2024.3.1
+networkx>=3.2
+psutil>=5.9
+pytest>=8.0

@@ -1,34 +1,15 @@
-# Revision record
+# Revision record: completed Davis evidence
 
-The manuscript now focuses on controlled architectural evaluation. This is a
-revised research draft, not a completed independent-validation report.
+On October 25, 2026, the author requested stopping all ongoing training and building the manuscript from the completed Davis study. Training was terminated, checkpoints and development history were retained, and automatic resumption was disabled. The separate unfinished benchmark and additional-fold training are excluded from the paper.
 
-| Request | Implemented revision | Remaining evidence |
-|---|---|---|
-| Independent benchmark and controlled reruns | Frozen official KIBA protocol; fresh supervised BINDRA models; pinned official GraphDTA-GIN and MGraphDTA; ridge/random forest; shared partitions, validation-only selection, single/ensemble reporting; separate pretraining and supervised exposure audit | Training and test evaluation are running. No new benchmark metrics are claimed. |
-| Reduce generation emphasis | New architectural title and abstract; concise negative findings in main text; detailed generation/docking methods, tables, figures, and failures in supplement | No claim of useful target-conditioned design or experimental binding. |
-| Promote decisive uncertainty and diagnostics | Main Tables 2-5 include individual-model variation, ensemble intervals, paired MSE/CI contrasts, plateau errors, within-target ranking, absolute attention AP, prevalence, permutation, and gradient controls | Two additional Davis validation folds confirm the two leading fixed configurations with three seeds; exhaustive eight-arm retuning was removed in a disclosed runtime amendment. |
-| Scientific narrative and consistent terminology | BINDRA and BINDRA-iBAM used consistently; historical test-exposure disclosure retained; glossary and development records moved to supplement; attention-contact correspondence replaces validation language | Author declarations and persistent full-data/model deposits remain unresolved. |
+| Requested improvement | Current treatment |
+|---|---|
+| Independent benchmark and local external/classical baselines | Not completed or claimed. The paper is explicitly Davis-only; the absence of independent evaluation and local baseline reruns is a limitation. |
+| Controlled architecture comparison | Eight downstream arms, common frozen encoders, equal six-configuration tuning budget, and three-seed validation selection. Selection used one fixed validation fold. |
+| Prediction uncertainty and diagnostics | Main tables report individual/ensemble results, crossed-bootstrap intervals, paired contrasts, plateau errors, within-target ranking, and cold-protocol behavior. |
+| Narrow interpretation claims | Attention-contact correspondence is compared with prevalence, permutation, gradient attribution, atom-order, and randomization controls. Physical mechanism is not claimed. |
+| Reduced generation emphasis | Main text retains the zero measured-analog recovery result; extensive generation, screening, preparation failures, and docking details are supplementary. |
+| Literature context | All 19 primary-reviewed model variants are included in the supplementary table, with split, resource, selection, and publication-status qualifications. No universal SOTA or cross-paper significance claim is made. |
+| Scientific narrative | Pending-experiment language removed. Historical Davis test exposure remains prominent. The latest readable abstract and selected title are synchronized. |
 
-Main source prose decreased from 6711 to 6062 words, approximately 9.7%, using
-the same counter before references and expanded tables. The structured
-abstract contains 244 words. Main figures are editable PDF/SVG with 600-dpi
-PNG/TIFF alternatives in the local submission package.
-
-The KIBA chemical audit covers 2068 ligands against the actual 649364-molecule
-ligand-pretraining corpus: 2067 have no normalized identity, parent, or scaffold
-overlap; one unresolved chemical mapping remains unknown. Protein-language
-model pretraining exposure remains unknown. KIBA is an independent dataset,
-not a claim that public labels were historically inaccessible.
-
-The public `reference/` implementation was tested against the existing GitHub
-base without the uncommitted project changes. The limited release excludes
-weights, datasets, raw chemistry, large run archives, and internal QA logs.
-Its benchmark and additional-fold results must be incorporated before journal
-submission. Existing frozen research checkpoints and predictions are preserved.
-
-Runtime-budget amendment: at the user's request, the queue was reduced from
-212 to 36 neural fits and 40 to 16 classical fits after initial validation
-inspection and before any KIBA test scoring. All neural methods retain the
-same reduced tuning budget and three final seeds. Two-model Davis confirmation
-replaces full eight-arm foldwise retuning; no broader stability claim is made.
+The manuscript does not satisfy the earlier requested independent-dataset validation; it reports a narrower, completed study. Author declarations and persistent full-asset deposits remain the final submission actions.

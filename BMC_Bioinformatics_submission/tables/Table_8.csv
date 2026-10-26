@@ -1,0 +1,7 @@
+Condition,All-query validity (%),Strict-Kd validity (%),Strict-Kd uniqueness (%),Strict-Kd recovery (%)
+Structured iBAM,88.37,100.00,99.27,0.00
+Global only,88.90,100.00,99.00,0.00
+Uniform iBAM,88.26,100.00,99.33,0.00
+Shuffled iBAM,88.19,100.00,99.20,0.00
+Seed only,89.38,100.00,99.20,0.00
+Target shuffled,89.04,100.00,99.00,0.00
