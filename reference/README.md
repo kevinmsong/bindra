@@ -11,8 +11,8 @@ The current manuscript reports completed Davis comparisons and supporting case
 studies. **BINDRA** is the validation-selected pooled architecture (C-matched);
 **BINDRA-iBAM** is its retained no-FiLM attention companion (F). Each reported
 prediction ensemble averages three independently trained members in pKd space.
-See [the manuscript](../J_Cheminform_submission/manuscript.md) for protocols,
-results, uncertainty, historical test exposure, and limitations.
+The separately maintained manuscript package describes protocols, results,
+uncertainty, historical test exposure, and limitations.
 
 The separate KIBA benchmark, local external/classical baseline reruns, and
 additional Davis-fold confirmation were discontinued on October 25, 2026. Their

@@ -78,3 +78,8 @@ prospective/**/*unblind*
 Thumbs.db
 desktop.ini
 runs/
+
+# Submission manuscripts and compiled PDFs stay in the local authoring package.
+*.[pP][dD][fF]
+J_Cheminform_submission/
+BMC_Bioinformatics_submission/

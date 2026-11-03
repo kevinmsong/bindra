@@ -23,21 +23,15 @@ iBAM means **Interpretable Binding Attention Map**. Residue and bond attention,
 structural controls, retrospective screening, molecular editing, and docking are
 supporting analyses described in the manuscript and supplement.
 
-## Paper and source data
+## Source release
 
-- [Manuscript PDF](J_Cheminform_submission/manuscript.pdf)
-- [Readable manuscript](J_Cheminform_submission/manuscript.md)
-- [Supplementary PDF](J_Cheminform_submission/additional_files/Additional_file_1_supplement.pdf)
-- [Supplementary source](J_Cheminform_submission/additional_files/Additional_file_1_supplement.md)
-- [Architecture diagram](J_Cheminform_submission/figures/Figure_1_architecture.svg)
-- [FAK1-P4N iBAM and bond-map case](J_Cheminform_submission/figures/Figure_6_FAK1_case.pdf)
-- [Release contents and availability](J_Cheminform_submission/README.md)
-- [Reference API and usage](reference/README.md)
+This repository contains the reference implementation, tests, and lightweight
+protocol records. Manuscript and supplementary documents, compiled PDFs, and
+submission artwork are maintained separately in the local authoring package.
 
-The current draft is prepared for Journal of Cheminformatics. Earlier journal
-versions remain in repository history. Selected result tables accompany the
-paper; complete model/data deposits and final author approval remain separate
-submission steps.
+The completed study uses Davis for affinity evaluation. Encoder weights, trained
+model checkpoints, feature stores, raw data, and large generated-draw archives are
+separate assets with their own access and redistribution terms.
 
 ## Run the reference checks
 
