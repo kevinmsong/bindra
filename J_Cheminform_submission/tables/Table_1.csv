@@ -1,0 +1,9 @@
+Model,Prediction architecture,Fitted parameters,Mean MSE,Seed SD,Refit epochs
+A,Protein only,347843,0.71282,0.00081,28
+B,Ligand only,348035,0.62299,0.00093,28
+C,Pooled concatenation,695365,0.23409,0.00201,72
+D,Gated pooled fusion,697287,0.23213,0.00383,72
+E,Attention with FiLM,2451205,0.23490,0.00960,58
+F,Attention without FiLM,2228293,0.22461,0.00306,69
+G,FiLM attention and readout gates,2454664,0.23569,0.00683,54
+C-matched,Capacity-matched pooled fusion,2455221,0.21528,0.00807,69

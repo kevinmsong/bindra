@@ -11,7 +11,7 @@ The current manuscript reports completed Davis comparisons and supporting case
 studies. **BINDRA** is the validation-selected pooled architecture (C-matched);
 **BINDRA-iBAM** is its retained no-FiLM attention companion (F). Each reported
 prediction ensemble averages three independently trained members in pKd space.
-See [the manuscript](../BMC_Bioinformatics_submission/manuscript.md) for protocols,
+See [the manuscript](../J_Cheminform_submission/manuscript.md) for protocols,
 results, uncertainty, historical test exposure, and limitations.
 
 The separate KIBA benchmark, local external/classical baseline reruns, and
@@ -50,6 +50,8 @@ Those methods were not completed as local manuscript comparisons.
   `KIBA_score` scale. These scales are never interchanged.
 - `train.py`: validation-only checkpoint selection, regression/ranking metrics,
   optimizer and random-state checkpointing, and matching-manifest resumption.
+- `ensemble.py`: ordered arithmetic aggregation of three declared pKd prediction
+  members, with per-member values and descriptive sample SD.
 - `exposure.py`: chemical pretraining-exposure audits. Failed or ambiguous
   normalization remains unknown rather than being labeled unexposed.
 - `study.py`: the archived, gated benchmark runner. Test scoring requires frozen
@@ -61,6 +63,35 @@ protein or ligand encoder. New supervised models initialize fresh downstream
 weights over original frozen ESM-C 600M and five-epoch LiGhT features, rather than
 Davis-adapted member states. Internal features from independently trained members
 must not be averaged as though their coordinates were interchangeable.
+
+## Three-member Davis prediction aggregation
+
+After predicting each member independently with `reference.train.predict`, retain
+each prediction array's original observation identifiers:
+
+```python
+from reference.ensemble import DAVIS_SEEDS, MemberPredictions, aggregate_davis
+
+# predictions_by_seed and pair_ids_by_seed are the exported member records.
+members = [
+    MemberPredictions(seed, pair_ids_by_seed[seed], predictions_by_seed[seed], "pKd")
+    for seed in DAVIS_SEEDS
+]
+result = aggregate_davis(members)
+```
+
+Use three independent members of the same architecture. The default seeds are
+20261001, 20261002, and 20261003. The helper rejects missing or repeated members,
+different observation IDs or row orders, nonfinite values, and label scales other
+than pKd. It preserves the supplied common row order and sorts member columns by
+seed. `mean_pKd` is the equal arithmetic mean of pKd values. `member_SD_pKd` uses
+the sample standard deviation across members (`ddof=1`); it is descriptive and
+does not provide calibrated coverage. Each member must supply its own original
+IDs so that misordered arrays are detectable.
+
+This helper loads no weights, averages no latent features, and launches no
+training. Reproducing trained predictions still requires the separately obtained
+checkpoints and compatible frozen feature caches described below.
 
 ## Frozen-feature interface
 

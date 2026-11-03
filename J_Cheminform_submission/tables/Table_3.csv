@@ -1,0 +1,7 @@
+Model,Warm-test stratum,N,MSE,MAE,Mean within-target CI
+BINDRA,all pairs,5010,0.19663,0.23757,0.88300
+BINDRA,detection plateau,3468,0.05498,0.11089,Not reported
+BINDRA,above plateau,1542,0.51520,0.52248,Not reported
+BINDRA-iBAM,all pairs,5010,0.19586,0.22683,0.90308
+BINDRA-iBAM,detection plateau,3468,0.06462,0.09937,Not reported
+BINDRA-iBAM,above plateau,1542,0.49103,0.51348,Not reported
